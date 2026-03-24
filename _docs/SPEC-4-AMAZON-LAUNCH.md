@@ -12,8 +12,8 @@
 
 - Amazon Seller Central + FBM — подтверждённый канал (FBA не используется).
 - Синдикация: n8n → SP-API напрямую (BC-коннектор не используется).
-- Иконный бренд запускается внутри существующего SC-аккаунта AK Dealer Services.
-- Все листинги — один SC-кабинет; разделение финансов — на уровне бухгалтерии.
+- Launch account/entity for Seller Central is still pending owner confirmation. Any references below to an existing account are planning assumptions, not closed canon.
+- Все листинги предполагаются в одном SC-кабинете; разделение финансов — на уровне бухгалтерии, если owner подтвердит existing-account launch path.
 - `merchant_sku` формата `IC-XXXXXX` — идентификатор иконных листингов.
 - GTIN Exemption необходим до первой публикации (handmade religious items без UPC/EAN).
 - Human review обязателен перед любой публикацией (Пайплайн E, SPEC-5).
@@ -25,7 +25,7 @@
 
 | Параметр | Магазин 1 | Магазин 2 (иконы) |
 |---|---|---|
-| SC-аккаунт | AK Dealer Services | Тот же ✅ |
+| SC-аккаунт | Existing seller account (if owner confirms) | Pending owner confirmation |
 | Бренд | Бренд AK | Отдельный бренд икон |
 | Банковский счёт | Один на оба | Разделение через бухгалтерию |
 | Seller ID / SP-API credentials | — | Те же, не меняются |
@@ -47,7 +47,7 @@
 
 ## 3. Вариант A — Прямые листинги
 
-**A.1 — Название бренда:** отличается от «AK Dealer Services», стабильное.
+**A.1 — Название бренда:** отдельное от юридического имени seller account, стабильное.
 
 **A.2 — GTIN Exemption:**
 ```

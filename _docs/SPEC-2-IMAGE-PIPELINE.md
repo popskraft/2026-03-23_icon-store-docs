@@ -174,6 +174,6 @@ Stage C: Published Derivatives (Python worker → S3/R2, авто из Stage B)
 
 | Решение | Текущая рекомендация | Почему открыто |
 |---|---|---|
-| Object storage провайдер | Cloudflare R2 | Зависит от предпочтений владельца |
+| Object storage провайдер | Cloudflare R2 | AWS S3 остаётся совместимым fallback, но launch default уже выбран |
 | Background removal default | Опциональный | Чистые пропускают |
 | Sampling rate QA | 100% для Amazon main | Нужны данные пилота |

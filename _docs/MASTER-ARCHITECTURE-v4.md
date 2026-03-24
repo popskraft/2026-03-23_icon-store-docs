@@ -1,10 +1,10 @@
 # MASTER-ARCHITECTURE-v4.md
 
-> **Версия:** 4.1 — добавлен слой спецификаций: Spec-1 (каталог и схема данных), Spec-2 (pipeline изображений), Spec-3 (генерация контента), Spec-4 skeleton (Amazon Operations), Spec-5 (Operator Playbook). Зафиксированы решения сессии: FBM вместо FBA, Amazon-синдикация через n8n → SP-API напрямую (BC-коннектор не используется), единый пул инвентаря.
+> **Версия:** 4.2 — все спецификации приведены к каноническому формату (стандартный заголовок + раздел "Архитектурный контекст v4.2"), пройдена редакторская минимизация: удалены туториалы и объяснения для новичков, сохранены все операционные схемы, контракты, таблицы статусов. Корпус документации стабилен.
 > **Автор:** Claude Sonnet 4.6
-> **Дата:** 2026-03-23
-> **Статус:** Рабочий канон. Заменяет v3.
-> **Предыдущие версии:** v1 (Codex), v2 (merged), v3 (ролевая модель + потоки) — архивированы, не удалять
+> **Дата:** 2026-03-24
+> **Статус:** Стабильный канон. Заменяет v4.1.
+> **Предыдущие версии:** v1 (Codex), v2 (merged), v3 (ролевая модель + потоки), v4.1 (спецификации skeleton) — архивированы, не удалять
 
 ---
 
@@ -41,8 +41,8 @@
           category, faceted filters, Amazon payload)
                │
          Оператор review
-         (Supabase Table Editor: проверяет AI-контент,
-          ставит approved)
+         (CSV review pack для батчей; Table Editor для
+          точечных правок и exception handling)
                │
       ┌────────┴────────┐
       ▼                 ▼
@@ -92,7 +92,7 @@
 4. **n8n credentials** → Supabase, S3/R2, Claude API, SP-API, BigCommerce API
 5. **Владелец вводит первые 10 SKU** → Supabase Table Editor (Слой 1)
 6. **n8n запускает AI-обогащение** → Claude API заполняет Слой 2
-7. **Оператор review** → Table Editor, статус `approved`
+7. **Оператор review** → CSV review pack (`APPROVE / REJECT / REGEN`), точечные правки через Table Editor
 8. **Amazon** → GTIN Exemption → тестовый листинг 1 SKU (SPEC-4)
 9. **BigCommerce** → первая публикация карточки
 
@@ -104,7 +104,7 @@
 | ------------------------ | ------------------------------------------------- | ---------------------------- |
 | **Supabase**             | PostgreSQL + Studio UI (owner intake + AI review) | $0 → $25/мес                 |
 | **n8n CE**               | Оркестрация всех потоков                          | Self-hosted VPS ~$5–10/мес   |
-| **Cloudflare R2 / S3**   | Мастера и деривативы изображений                  | ~$0.015/GB/мес               |
+| **Cloudflare R2**        | Мастера и деривативы изображений (launch default) | ~$0.015/GB/мес               |
 | **Claude API**           | AI-обогащение карточек                            | ~$0.01–0.05 за SKU           |
 | **Remove.bg**            | Удаление фона                                     | $0.2/фото или rembg локально |
 | **BigCommerce Standard** | Сайт + CDN                                        | ~$29/мес                     |
@@ -302,7 +302,7 @@
 | Marketplace | Amazon Seller Central + FBM | ✅ Подтверждён |
 | Канонический реестр + Owner UI | **Supabase** (PostgreSQL 15 + Table Editor + RLS) | ✅ Подтверждён 2026-03-24 |
 | Оркестрация | n8n CE (self-hosted VPS) | ✅ Подтверждён |
-| Хранилище изображений | Cloudflare R2 или S3 | ✅ Подтверждён (Cloudinary убран) |
+| Хранилище изображений | Cloudflare R2 (S3-compatible; launch default) | ✅ Подтверждён |
 | Обработка и нарезка фото | Python (Pillow / libvips) | ✅ Подтверждён |
 | Удаление фона | Remove.bg API → fallback: rembg (локальный) | ⚠️ Выбрать на пилоте |
 | AI-обогащение контента | Claude API (Messages + Batches) | ✅ Подтверждён |
@@ -568,7 +568,6 @@ services:
 ### Near-term
 
 - Потолок бюджета на инфраструктуру до выхода в доход (~$100 или ~$200/мес)?
-- n8n: self-hosted (VPS) или n8n Cloud?
 - Вариантная стратегия: размеры/рамы как BigCommerce variants или отдельные SKU?
 - Физический склад: сколько SKU реально готово к отгрузке сейчас?
 - Один поставщик или несколько?
@@ -664,4 +663,3 @@ services:
 | `SPEC-5-PIPELINES.md` | Все 7 пайплайнов (A–G), n8n workflow детали |
 | `SPEC-6-STOREFRONT.md` | Storefront IA, навигация, SEO (Phase 2 skeleton) |
 | `SPEC-7-OPERATOR-PLAYBOOK.md` | Процедуры оператора, статусная матрица, SQL quick ref |
-

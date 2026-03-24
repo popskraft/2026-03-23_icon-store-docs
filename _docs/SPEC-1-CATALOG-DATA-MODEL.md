@@ -60,7 +60,7 @@
 | Система | Роль |
 |---|---|
 | **PostgreSQL (Supabase)** | Канонический реестр. Источник истины. |
-| **Supabase Table Editor** | UI для владельца (Слой 1) и оператора (review Слоя 2) |
+| **Supabase Table Editor** | UI для владельца (Слой 1), точечных operator edits и exception handling |
 | Google Drive | Inbox входящих фото. Только handoff. |
 | S3/R2 | Утверждённые мастера и деривативы |
 | BigCommerce | Сторфронт (publication layer) |
@@ -72,7 +72,7 @@
 
 ```
 Владелец (Table Editor Слой 1) → PostgreSQL → n8n → Claude API (Слой 2) →
-→ Оператор review (Table Editor) → BigCommerce (n8n → BC API) + Amazon (n8n → SP-API)
+→ Оператор review (CSV batch review + Table Editor for exceptions) → BigCommerce (n8n → BC API) + Amazon (n8n → SP-API)
 ```
 
 ---
