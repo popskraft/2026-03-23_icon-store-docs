@@ -1,0 +1,16 @@
+title: "Icon Store Documents"
+description: "Private-by-link document portal for the icon store project."
+markdown: kramdown
+kramdown:
+  input: GFM
+permalink: pretty
+exclude:
+  - AGENTS.md
+  - ROADMAP.md
+  - OPEN-QUESTIONS.md
+  - .DS_Store
+  - .gitignore
+  - .obsidian
+  - ikon
+  - _temp
+  - vendor
