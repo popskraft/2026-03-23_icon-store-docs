@@ -62,7 +62,6 @@ amazon_status   = 'live'              ← листинг активен на Ama
     - Amazon SP-API (Listings w, Orders r/w)
     - S3/R2 (upload, read, list)
     - Claude API (Messages + Batches)
-    - Remove.bg API key
 □ Подключить Google Drive → n8n webhook на incoming/
 □ Получить GTIN Exemption в Amazon Seller Central
 □ Прогнать тест 1 SKU end-to-end (без публикации)

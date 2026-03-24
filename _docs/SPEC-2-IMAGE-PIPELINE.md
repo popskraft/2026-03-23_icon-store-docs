@@ -31,7 +31,7 @@
 | Входящий inbox | Google Drive | — |
 | Хранилище мастеров | Cloudflare R2 (S3-compatible) | AWS S3 |
 | Processing worker | Python (Pillow / pyvips) | Node.js / Sharp |
-| Удаление фона | remove.bg API → fallback: rembg | — |
+| Удаление фона | Локально в Python worker (алгоритмы Pillow/pyvips) | Ручная ретушь через operator flow |
 | QA-записи | PostgreSQL + batch review артефакты | — |
 | Publication layer | BigCommerce Catalog API + n8n → SP-API | — |
 
@@ -95,7 +95,7 @@ Stage A: Incoming
     └── Проблемные → ТЗ обработчику → approved/{SKU}/ → Stage B
 
 Stage B: Approved Master (Python worker → S3/R2)
-    - удаление фона: remove.bg → fallback: rembg
+    - удаление/очистка фона: локально в worker (без внешних background-removal API)
     - нормализация: ориентация, sRGB, экспозиция, контраст, padding на белый фон
     - проверка: ≥ 2000px по длинной стороне
     - PostgreSQL: approved_master_uri, image_qa_status = approved
@@ -175,5 +175,5 @@ Stage C: Published Derivatives (Python worker → S3/R2, авто из Stage B)
 | Решение | Текущая рекомендация | Почему открыто |
 |---|---|---|
 | Object storage провайдер | Cloudflare R2 | AWS S3 остаётся совместимым fallback, но launch default уже выбран |
-| Background removal default | Опциональный | Чистые пропускают |
+| Background removal default | Локально в Python worker | Порог качества валидируется на пилоте |
 | Sampling rate QA | 100% для Amazon main | Нужны данные пилота |

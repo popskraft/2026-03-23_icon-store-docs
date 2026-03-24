@@ -99,7 +99,7 @@ Stage A: Incoming
 Stage B: Approved Master (Python worker → S3/R2)
     POST http://localhost:8001/process
     Body: { "sku": "IC-000001", "source_uri": "...", "output_bucket": "r2://icons/" }
-    - remove.bg → fallback: rembg (при confidence < 0.85: флаг REVIEW_BG_FAILED)
+    - удаление/очистка фона локально в Python worker (при артефактах: флаг REVIEW_BG_FAILED)
     - нормализация: ориентация, sRGB, экспозиция, контраст, padding
     - проверка: ≥ 2000px по длинной стороне
     → approved/{SKU}/master.jpg в S3/R2
@@ -131,9 +131,8 @@ Stage C: Published Derivatives (авто из Stage B)
 
 | Ситуация | Статус | Действие оператора |
 |---|---|---|
-| remove.bg недоступен | Автопереключение на rembg | Ничего |
-| rembg confidence < 0.85 | Флаг `REVIEW_BG_FAILED` | Смотреть оригинал, выбрать путь |
-| Оба упали | `image_qa_status = 'processing'`, `sync_error_code = BG_REMOVAL_FAILED` | Уведомление |
+| Локальный background pass дал артефакты | Флаг `REVIEW_BG_FAILED` | Смотреть оригинал, выбрать путь |
+| Ошибка worker при очистке фона | `image_qa_status = 'processing'`, `sync_error_code = BG_REMOVAL_FAILED` | Уведомление |
 
 **Пути при `BG_REMOVAL_FAILED`:**
 - Фон уже белый → `SET image_qa_status = 'approved'` → перезапустить `image-process`
