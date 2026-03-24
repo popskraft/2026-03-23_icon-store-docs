@@ -10,6 +10,15 @@
     <link rel="stylesheet" href="{{ '/assets/site.css' | relative_url }}">
   </head>
   <body>
+    {% if page.index_only %}
+    <main class="page-shell page-shell--index-only">
+      <article class="card card--index-only">
+        <div class="prose prose--index-only">
+          {{ content }}
+        </div>
+      </article>
+    </main>
+    {% else %}
     <header class="site-header">
       <div class="site-header__inner">
         <a class="site-home" href="{{ '/' | relative_url }}">{{ site.title }}</a>
@@ -31,5 +40,6 @@
         </div>
       </article>
     </main>
+    {% endif %}
   </body>
 </html>

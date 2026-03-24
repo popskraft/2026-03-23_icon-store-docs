@@ -101,6 +101,10 @@ pre code {
   padding: 1rem 0 2.5rem;
 }
 
+.page-shell--index-only {
+  padding-top: 2.5rem;
+}
+
 .card {
   background: color-mix(in srgb, var(--paper) 94%, white);
   border: 1px solid rgba(143, 116, 86, 0.2);
@@ -146,6 +150,15 @@ pre code {
 
 .prose {
   padding: 1.5rem 2rem 2rem;
+}
+
+.card--index-only {
+  width: min(720px, calc(100% - 2rem));
+  margin: 0 auto;
+}
+
+.prose--index-only {
+  padding-top: 2rem;
 }
 
 .prose h1:first-child {
@@ -210,6 +223,27 @@ pre code {
 .doc-list p {
   margin: 0.35rem 0 0;
   color: var(--muted);
+}
+
+.doc-list--compact {
+  margin-top: 0;
+  gap: 0.75rem;
+}
+
+.doc-list--compact li {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.doc-list--compact a {
+  display: inline-block;
+  padding: 0.45rem 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
 }
 
 @media (max-width: 720px) {
