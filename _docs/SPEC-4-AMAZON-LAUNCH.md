@@ -1,333 +1,156 @@
-# Amazon — Второй магазин (иконы) в существующем аккаунте
-## Добавление второго бренда в Amazon Seller Central AK Dealer Services
+# SPEC-4: Операционный запуск Amazon
 
-**Версия:** 2.0
-**Дата:** 2026-03-23
-**Аккаунт:** существующий SC-аккаунт AK Dealer Services
-**Подход:** второй бренд внутри одного аккаунта — регистрация нового аккаунта не нужна
-
----
-
-## 1. Контекст и исходные данные
-
-### Ситуация
-
-| Параметр | Магазин 1 (существующий) | Магазин 2 (создаётся) |
-|----------|--------------------------|----------------------|
-| **SC-аккаунт** | AK Dealer Services | Тот же аккаунт ✅ |
-| **Категория** | Автоаксессуары | Иконы / религиозные товары |
-| **Бренд** | Бренд AK | Отдельный бренд икон |
-| **Банковский счёт на уровне Amazon** | Один счёт для обоих магазинов | Один счёт (разделение — через бухучёт) |
-| **Логин SC** | Существующий | Тот же |
-| **Склад** | Общий | Общий |
-| **Продукт-линейки** | Авто | Иконы — полностью отдельная линейка |
-
-### Что означает «второй магазин» в этом контексте
-
-Amazon не имеет понятия «второй магазин» как отдельной сущности внутри одного аккаунта в базовом смысле. На практике это означает:
-
-- Новый **бренд** в существующем аккаунте
-- Отдельный набор **листингов** под этим брендом
-- Опционально: отдельная **Brand Store** (витрина `amazon.com/icon-brand-name`) через Brand Registry
-- Все листинги управляются из одного SC-кабинета
-
-### Финансовое разделение
-
-Поскольку оба бренда находятся в одном SC-аккаунте — Amazon перечисляет все выплаты на **один** банковский счёт. Разделение денежных потоков между авто и иконами происходит **на уровне бухгалтерского учёта**, не на уровне Amazon:
-
-- В бухгалтерском ПО (QuickBooks, Wave, Excel) создать два отдельных центра затрат / аналитических тега
-- Регулярно (раз в месяц) делать внутренний перевод доли выручки от икон на отдельный банковский счёт иконного бизнеса
-- Amazon Order Reports позволяют фильтровать заказы по ASIN/бренду — можно выгружать отчёт только по иконам
+Версия: 2.0
+Статус: рабочий черновик (implementation-facing)
+Язык: русский
+Базис: `MASTER-ARCHITECTURE-v4.md` v4.2
+Область: добавление бренда икон в существующий SC-аккаунт, GTIN Exemption, Brand Registry, Shipping Template, SP-API интеграция
 
 ---
 
-## 2. Два варианта запуска — сравнение
+## Архитектурный контекст (v4.2)
 
-Внутри существующего аккаунта есть два пути:
-
-| | **Вариант A: Прямые листинги** | **Вариант B: Brand Registry + Store** |
-|--|:---:|:---:|
-| Trademark нужен | ❌ Нет | ✅ Да (USPTO) |
-| Срок запуска | 1–2 недели | 3–15 месяцев (на trademark) |
-| Brand Store (`amazon.com/бренд`) | ❌ Нет | ✅ Есть |
-| A+ Content (расширенное описание) | ❌ Нет | ✅ Есть |
-| Защита бренда от копирования | ❌ Минимальная | ✅ Полная |
-| Сложность | Минимальная | Средняя |
-| **Рекомендация** | ✅ Начать с этого | ✅ Добавить позже |
-
-**Рекомендуемая стратегия:** запустить продажи через Вариант A немедленно, параллельно подать заявку на trademark и перейти на Вариант B через 6–12 месяцев.
+- Amazon Seller Central + FBM — подтверждённый канал (FBA не используется).
+- Синдикация: n8n → SP-API напрямую (BC-коннектор не используется).
+- Иконный бренд запускается внутри существующего SC-аккаунта AK Dealer Services.
+- Все листинги — один SC-кабинет; разделение финансов — на уровне бухгалтерии.
+- `merchant_sku` формата `IC-XXXXXX` — идентификатор иконных листингов.
+- GTIN Exemption необходим до первой публикации (handmade religious items без UPC/EAN).
+- Human review обязателен перед любой публикацией (Пайплайн E, SPEC-5).
+- Browse node: подход определён (Home Décor как старт), финальный node ID — после пилота.
 
 ---
 
-## 3. Вариант A — Прямые листинги под новым брендом
+## 1. Контекст
 
-### Что нужно подготовить до первого листинга
+| Параметр | Магазин 1 | Магазин 2 (иконы) |
+|---|---|---|
+| SC-аккаунт | AK Dealer Services | Тот же ✅ |
+| Бренд | Бренд AK | Отдельный бренд икон |
+| Банковский счёт | Один на оба | Разделение через бухгалтерию |
+| Seller ID / SP-API credentials | — | Те же, не меняются |
+| Склад | Общий | Общий |
 
-**Шаг A.1 — Определить название бренда икон**
+---
 
-Название бренда фиксируется на уровне листинга в поле `Brand`. Оно должно быть:
-- Отличным от «AK Dealer Services» и любых брендов автомагазина
-- Стабильным — менять бренд на существующих листингах нельзя без Amazon Support
-- Желательно отражающим тематику (религиозное искусство, православие)
+## 2. Стратегия запуска
 
-**Шаг A.2 — Получить GTIN Exemption для нового бренда**
+| | Вариант A: Прямые листинги | Вариант B: Brand Registry |
+|--|---|---|
+| Trademark нужен | ❌ | ✅ (USPTO) |
+| Срок | 1–2 недели | 3–15 месяцев |
+| Brand Store | ❌ | ✅ |
+| A+ Content | ❌ | ✅ |
+| **Рекомендация** | ✅ Запускать сразу | ✅ Добавить позже |
 
-Иконы не имеют стандартных UPC/EAN-кодов. GTIN Exemption нужно получить именно для нового бренда икон — даже если для автобренда он уже есть, он привязан к конкретному бренду и категории.
+---
 
-Пошаговая инструкция:
-1. SC → Catalog → Add Products → «I'm adding a product not sold on Amazon»
-2. Выбрать категорию: **Home Décor** или **Collectibles** (см. примечание ниже)
-3. На странице добавления товара нажать **«Apply for GTIN Exemption»**
-4. Заполнить:
-   ```
-   Brand name:  [название бренда икон]
-   Category:    Home Décor (или Religious & Ceremonial если доступно)
-   Reason:      These are handcrafted religious items without standard barcodes.
-                Products are unique artisan pieces with no manufacturer UPC.
-   ```
-5. Прикрепить фото товаров (2–3 штуки) и описание бизнеса
-6. Отправить — решение приходит в течение 3–5 рабочих дней
+## 3. Вариант A — Прямые листинги
 
-> **Примечание по категории:** Amazon US не выделяет «Orthodox Icons» в отдельную категорию. Иконы скорее всего попадут в **Home Décor** (открытая категория, ungating не нужен) или **Collectibles** (требует ungating). Рекомендуется начать с Home Décor — это проще и быстрее.
+**A.1 — Название бренда:** отличается от «AK Dealer Services», стабильное.
 
-**Шаг A.3 — Проверить ungating категории**
-
-Прежде чем публиковать первый листинг:
-1. SC → Catalog → Add Products → ввести «religious icon» или «orthodox icon»
-2. Выбрать категорию → если есть иконка замка 🔒 — нужен ungating
-3. Если замка нет — можно публиковать сразу
-
-**Если нужен ungating (категория Collectibles или Religious):**
-1. SC → Help → Contact Us → «I need help with... Selling on Amazon»
-2. Запросить ungating для категории
-3. Потребуются: инвойсы/накладные от поставщика на сумму от $3000+, сайт магазина, описание бизнеса
-4. Срок: 5–14 рабочих дней
-
-**Шаг A.4 — Создать Shipping Template для икон**
-
-В существующем аккаунте уже есть Shipping Template для авто. Для икон рекомендуется создать отдельный шаблон — другие сроки и стоимость доставки.
-
-1. SC → Settings → Shipping Settings → Create New Shipping Template
-2. Имя: `icon-store-standard`
-3. Заполнить:
-
-| Регион | Тип доставки | Стоимость | Срок |
-|--------|-------------|-----------|------|
-| US (continental) | Standard | $0 или $4.99 | 5–8 business days |
-| US (continental) | Expedited | $9.99 | 2–3 business days |
-| Alaska / Hawaii | Standard | $7.99 | 7–12 business days |
-
-> Бесплатная доставка Standard увеличивает конверсию. Рекомендуется закладывать стоимость доставки в цену товара.
-
-**Шаг A.5 — Настроить Return Policy для икон**
-
-1. SC → Settings → Return Settings → Add Return Address
-2. Адрес возврата: общий склад (тот же что для авто — допустимо)
-3. Return window: **30 дней** (минимальный стандарт Amazon)
-4. Для товаров ручной работы можно добавить примечание: «Handcrafted items: return accepted within 30 days if item is not as described»
-
-### Как создать первый листинг
-
-**Шаг A.6 — Добавить товар**
-
-1. SC → Catalog → Add Products → «I'm adding a product not sold on Amazon»
-2. Выбрать категорию (Home Décor или согласно результатам шага A.3)
-3. Заполнить обязательные поля:
-
+**A.2 — GTIN Exemption:**
 ```
-Product name:     [amazon_title из PostgreSQL]
-Brand:            [название бренда икон]
-Manufacturer:     [название бренда икон]
-SKU:              [merchant_sku из PostgreSQL, например IC-000001]
-Price:            [amazon_price]
-Quantity:         [amazon_reserved]
-Fulfillment:      I will ship this item myself (FBM)
+SC → Catalog → Add Products → «I'm adding a product not sold on Amazon»
+→ категория: Home Décor
+→ Apply for GTIN Exemption
+→ Brand name: [бренд икон]
+→ Reason: «Handcrafted religious items without standard barcodes.»
+→ Прикрепить 2–3 фото + описание бизнеса
+→ Срок: 3–5 рабочих дней
+```
+
+**A.3 — Ungating:** SC → Add Products → «orthodox icon». Если 🔒 Collectibles — нужны инвойсы $3000+, сайт, 5–14 дней. Home Décor — открытая, ungating не нужен.
+
+**A.4 — Shipping Template:**
+```
+SC → Settings → Shipping Settings → New Template → «icon-store-standard»
+US continental Standard:  $0 или $4.99,  5–8 дней
+US continental Expedited: $9.99,          2–3 дня
+Alaska/Hawaii Standard:   $7.99,          7–12 дней
+```
+
+**A.5 — Return Policy:** адрес возврата, 30-дневное окно.
+
+**Структура листинга (поля из PostgreSQL):**
+```
+Product name:      [amazon_title]
+Brand:             [бренд икон]
+SKU:               [merchant_sku — IC-XXXXXX]
+Price:             [amazon_price]
+Quantity:          [amazon_reserved]
+Fulfillment:       FBM
 Shipping template: icon-store-standard
-Bullet points:    [5 буллетов из PostgreSQL]
-Description:      [описание из PostgreSQL]
-Keywords:         [backend_search_terms из PostgreSQL]
+Bullet points:     [amazon_bullet_1..5]
+Description:       [amazon_description_html]
+Keywords:          [amazon_backend_search_terms]
+Главное фото:      amazon-main (белый фон, 2000×2000 px)
 ```
 
-4. Загрузить фото: главное фото первым (amazon-main: белый фон, 2000×2000 px)
-5. Сохранить — листинг уходит в PENDING (обработка Amazon: 15 мин — 4 часа)
+---
 
-> **Для автоматизированной загрузки через n8n** — см. раздел 5 и MASTER-ARCHITECTURE-v4.md → Pipeline E.
+## 4. Вариант B — Brand Registry (добавить позже)
 
-### Ограничения Варианта A
+Требование: зарегистрированный trademark в USPTO. TEAS Plus, Class 16 и/или 21. $250/класс. Срок: 8–14 месяцев. Serial Number используется для BR пока trademark pending.
 
-- Нет Brand Store (отдельной витрины `amazon.com/бренд`)
-- Нет A+ Content (только стандартное описание)
-- Бренд не защищён от копирования другими продавцами
-- Amazon может запросить доказательство что бренд принадлежит продавцу при жалобах
+IP Accelerator: ускорение до 4–6 недель. Стоимость: $600–1000.
 
-Все эти ограничения снимаются при переходе на Вариант B (Brand Registry).
+После одобрения: Brand Store → A+ Content → Brand Analytics → Sponsored Brands.
 
 ---
 
-## 4. Вариант B — Brand Registry (добавляется позже)
+## 5. Влияние на SP-API (n8n)
 
-### Что даёт Brand Registry
-
-- **Brand Store:** персональная витрина `amazon.com/[brand-name]` с кастомным дизайном
-- **A+ Content:** расширенные описания с фото-блоками, таблицами сравнения, историей бренда
-- **Brand Analytics:** детальная аналитика поисковых запросов и конкурентов
-- **Защита:** Amazon активно блокирует нарушителей торговой марки
-- **Sponsored Brands:** рекламный формат с логотипом бренда в верху поисковой выдачи
-
-### Требования для Brand Registry
-
-Необходим **зарегистрированный товарный знак (trademark)** в USPTO (США) или через IP Accelerator.
-
-**Шаг B.1 — Подать заявку на trademark в USPTO**
-
-1. Перейти на https://www.uspto.gov/trademarks/apply
-2. Использовать TEAS Plus (онлайн-форма):
-   - Mark type: Word mark (словесный) или Design mark (с логотипом)
-   - International Class: **Class 16** (printed matter, religious images) и/или **Class 21** (декоративные предметы)
-   - Goods/Services description: «Religious icons; handcrafted Orthodox icons; devotional images»
-   - Стоимость: $250 за класс (TEAS Plus) или $350 (TEAS Standard)
-3. Получить **Serial Number** сразу после подачи (используется для Brand Registry пока trademark на рассмотрении)
-4. Срок до регистрации: 8–14 месяцев
-
-> **IP Accelerator:** Amazon предлагает ускоренную программу через партнёров — срок до Brand Registry сокращается до 4–6 недель при наличии pending trademark заявки. Стоимость: $600–1000 за услуги юриста. Сайт: https://brandregistry.amazon.com/ipaccelerator
-
-**Шаг B.2 — Зарегистрироваться в Brand Registry**
-
-После получения Serial Number от USPTO:
-1. https://brandregistry.amazon.com → Enroll a Brand
-2. Заполнить:
-   ```
-   Brand name:         [название бренда икон]
-   Trademark number:   [Serial Number от USPTO]
-   Trademark office:   USPTO
-   Product categories: Home & Garden, Collectibles
-   Countries sold:     United States
-   ```
-3. Подтвердить: Amazon пришлёт код верификации на email USPTO-заявки
-4. Срок одобрения: 3–10 рабочих дней
-
-**Шаг B.3 — Создать Brand Store**
-
-После одобрения Brand Registry:
-1. SC → Stores → Manage Stores → Create Store
-2. Выбрать шаблон (Highlight, Grid, Marquee)
-3. Настроить главную страницу: логотип, баннер, категории товаров
-4. Опубликовать — Store появится по адресу `amazon.com/stores/[brand-name]`
-
-**Шаг B.4 — Добавить A+ Content к существующим листингам**
-
-1. SC → A+ Content Manager → Create A+ Content
-2. Выбрать листинг → добавить блоки с фото, текстом, таблицами
-3. Применить ко всем листингам бренда одним действием
-
----
-
-## 5. Влияние на систему автоматизации (n8n / SP-API)
-
-Поскольку используется тот же SC-аккаунт — **Seller ID не меняется**. Все SP-API credentials остаются теми же.
-
-### Что не меняется
-
-- SP-API Seller ID — тот же (иконы публикуются в тот же аккаунт)
-- SP-API credentials в n8n — те же (`Amazon SP-API (icon-store)` использует данные существующего аккаунта)
-- Marketplace ID — тот же (`ATVPDKIKX0DER` для US)
-- BigCommerce — не затрагивается
-- PostgreSQL — не затрагивается
-- S3 / R2 — не затрагивается
-
-### Что нужно проверить в n8n
-
-В workflow `amazon-syndicate` поле `brand` в теле SP-API запроса должно содержать **название нового бренда икон**, а не «AK Dealer Services» или автобренд:
+Seller ID и credentials не меняются. В workflow `amazon-syndicate`:
 
 ```json
 "attributes": {
-  "brand": [{ "value": "ИМЯ_БРЕНДА_ИКОН", "marketplace_id": "ATVPDKIKX0DER" }],
-  "item_name": [{ "value": "...", "marketplace_id": "ATVPDKIKX0DER" }],
-  ...
-}
-```
-
-Shipping template в запросе:
-```json
+  "brand": [{ "value": "ИМЯ_БРЕНДА_ИКОН", "marketplace_id": "ATVPDKIKX0DER" }]
+},
 "merchant_shipping_group_name": [{ "value": "icon-store-standard" }]
 ```
 
-### Разделение листингов в SP-API отчётах
+---
 
-Поскольку в аккаунте два бренда, для фильтрации при мониторинге использовать поле `merchant_sku` — все иконы имеют SKU формата `IC-XXXXXX`, автотовары — другой формат. Это позволяет однозначно разделять данные в PostgreSQL и отчётах.
+## 6. Финансовое разделение
+
+Amazon выплачивает на один счёт. Разделение в бухгалтерии:
+- Теги `AK-Dealer-Auto` и `Icon-Store`
+- Фильтр Order Report по SKU-префиксу `IC-`
+- Ежемесячный internal transfer доли выручки от икон
 
 ---
 
-## 6. Финансовое разделение без второго аккаунта Amazon
+## 7. Комиссии (FBM)
 
-Amazon переводит деньги на один банковский счёт. Для фактического разделения финансов:
-
-**Шаг 6.1 — Настроить аналитические теги в бухгалтерском ПО**
-
-В QuickBooks, Wave или Excel:
-- Создать два «класса» или «проекта»: `AK-Dealer-Auto` и `Icon-Store`
-- Все Amazon-продажи тегировать по SKU-префиксу автоматически или вручную
-- Amazon Order Reports → выгружать CSV → фильтровать по ASIN/SKU → импортировать в бухгалтерию
-
-**Шаг 6.2 — Ежемесячный внутренний перевод**
-
-1. По итогам месяца: суммировать выручку от икон (из Amazon Order Report, фильтр по IC-XXXXXX)
-2. Рассчитать чистую прибыль: выручка − referral fee − стоимость товаров − доставка
-3. Перевести эту сумму с основного счёта AK Dealer Services на отдельный банковский счёт иконного бизнеса
-4. Зафиксировать перевод как «inter-company transfer» в бухгалтерии
-
-**Шаг 6.3 — Amazon Order Report для контроля**
-
-```
-SC → Reports → By Date → Order Report
-→ Скачать CSV → фильтр по столбцу sku: значения начинаются на "IC-"
-→ Сумма столбца item-price = валовая выручка от икон за период
-```
-
----
-
-## 7. Комиссии Amazon для иконного магазина
-
-При FBM (продавец отгружает сам) дополнительных сборов за хранение нет:
-
-| Статья | Сумма |
-|--------|-------|
-| Referral fee (Home Décor) | 15% от цены продажи |
-| Referral fee (Religious & Ceremonial) | 15% от цены продажи |
-| Monthly Professional fee | $39.99/мес (уже оплачивается по основному аккаунту — **не удваивается**) |
-| FBA Storage fee | ❌ Нет (FBM) |
-| Fulfillment fee | ❌ Нет (FBM) |
-
-> **Важно:** Professional план ($39.99/мес) уже оплачивается по аккаунту AK Dealer Services. При добавлении второго бренда в тот же аккаунт — плата не увеличивается. Это значительное преимущество перед открытием отдельного аккаунта.
-
-Пример расчёта: икона за $45 → referral fee $6.75 → продавец получает $38.25 (до вычета стоимости товара и доставки).
+| | |
+|---|---|
+| Referral fee (Home Décor) | 15% от цены |
+| Professional fee $39.99/мес | Уже оплачен, не удваивается |
+| FBA Storage / Fulfillment | ❌ |
 
 ---
 
 ## 8. Чеклист запуска
 
-### Минимум для первой продажи (Вариант A)
-
+**Вариант A:**
 ```
-□ Выбрано название бренда икон
-□ Получен GTIN Exemption для нового бренда
-□ Проверен ungating категории (Home Décor — открытая, остальные — проверить)
-□ Создан Shipping Template «icon-store-standard»
-□ Настроен Return Policy (адрес возврата, 30-дневное окно)
-□ SP-API credentials проверены (Seller ID тот же, ничего не менялось)
-□ В workflow amazon-syndicate прописан правильный brand name и shipping template
-□ Тестовый листинг (1 SKU вручную) — проверить что появляется на Amazon
-□ Настроен финансовый учёт (теги в бухгалтерии для разделения потоков)
+□ Название бренда определено
+□ GTIN Exemption получен
+□ Ungating проверен
+□ Shipping Template «icon-store-standard» создан
+□ Return Policy настроен
+□ brand + shipping template прописаны в workflow amazon-syndicate
+□ Тестовый листинг (1 SKU) прошёл
+□ Финансовые теги в бухгалтерии настроены
 ```
 
-### Для Brand Registry (Вариант B, добавить позже)
-
+**Вариант B (позже):**
 ```
-□ Подана заявка на trademark в USPTO (или через IP Accelerator)
-□ Получен Serial Number USPTO
-□ Зарегистрирован в Amazon Brand Registry
-□ Создана Brand Store
-□ Добавлен A+ Content к листингам
+□ Trademark в USPTO подан
+□ Brand Registry активирован
+□ Brand Store создана
+□ A+ Content добавлен
 ```
 
 ---
@@ -335,31 +158,24 @@ SC → Reports → By Date → Order Report
 ## 9. Хронология
 
 ```
-Неделя 1:     Определить название бренда
-Неделя 1:     Создать Shipping Template + Return Policy в SC
-Неделя 1–2:   Подать заявку на GTIN Exemption (3–5 рабочих дней на решение)
-Неделя 2:     Проверить ungating категории
-Неделя 2:     Настроить бухгалтерские теги для разделения финансов
-Неделя 2–3:   Тестовый листинг 1 SKU вручную → проверить полный путь
-Неделя 3:     Запуск автоматизации через n8n для первой партии товаров
+Неделя 1:    Название бренда, Shipping Template, Return Policy
+Неделя 1–2:  GTIN Exemption (3–5 дней)
+Неделя 2:    Ungating + бухгалтерские теги
+Неделя 2–3:  Тестовый листинг → запуск n8n автоматизации
 
-Параллельно (долгосрочно):
-Месяц 1:      Подать заявку на trademark в USPTO
-Месяц 6–14:   Получение trademark → регистрация Brand Registry → Brand Store
+Параллельно долгосрочно:
+Месяц 1:     Заявка на trademark
+Месяц 6–14:  Trademark → Brand Registry → Brand Store
 ```
-
-**Итого до первой продажи: 2–3 недели** (при использовании Варианта A без Brand Registry).
 
 ---
 
 ## 10. Связанные документы
 
 | Документ | Что содержит |
-|----------|-------------|
-| `MASTER-ARCHITECTURE-v4.md` | Полная архитектура системы, все 7 пайплайнов |
-| Pipeline E (в MASTER-ARCHITECTURE-v4.md) | SP-API credentials, Shipping Template, листинги Amazon |
-| `OPEN-QUESTIONS.md` | Открытые вопросы по проекту |
-
----
-
-*Документ описывает добавление второго бренда (иконы) в существующий Amazon SC-аккаунт AK Dealer Services без создания отдельного аккаунта.*
+|---|---|
+| `MASTER-ARCHITECTURE-v4.md` | Executive layer: роли, принципы, стек |
+| `SPEC-1-CATALOG-DATA-MODEL.md` | PostgreSQL DDL, amazon_payload поля |
+| `SPEC-3-CONTENT-GENERATION.md` | Amazon-контент: title, bullets, backend_search_terms |
+| `SPEC-5-PIPELINES.md` | Pipeline E — SP-API, Shipping Template, листинги |
+| `SPEC-7-OPERATOR-PLAYBOOK.md` | Процедуры оператора, статусная матрица |
