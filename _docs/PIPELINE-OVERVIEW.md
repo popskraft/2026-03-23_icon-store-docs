@@ -1,6 +1,5 @@
 # Icon Store — Pipeline Overview
-> Версия: 1.2 · 2026-03-24 · Claude Sonnet 4.6
-> Канон: `MASTER-ARCHITECTURE-v4.md` · Детали: SPEC-1..SPEC-4
+> Версия: 1.1 · 2026-03-23 · Claude Sonnet 4.6 + Codex review
 
 ---
 
@@ -71,9 +70,10 @@ Google Sheets (новая строка)
         └── Уведомление оператору: "новая икона в очереди"
 ```
 
-**Инструменты:** n8n · PostgreSQL на Supabase (managed)
+**Инструменты:** n8n · PostgreSQL на Neon (managed, не временная база)
 
-> **Решение зафиксировано:** PostgreSQL на Supabase. Table Editor — интерфейс для owner-ввода (слой 1) и review AI-контента (слой 2). Один инструмент, одна база, один источник правды.
+> **Решение зафиксировано:** сразу поднимаем production PostgreSQL на Neon.
+> Временная "псевдобаза" не создаётся — это двойная миграция.
 
 ---
 
@@ -249,9 +249,9 @@ Amazon Processing
 | Входящие фото | Google Drive | Обмен с авторами и ретушёром |
 | Мастер-изображения | S3 / Cloudflare R2 | Постоянное хранение оригиналов |
 | Производные (JPG) | S3 / Cloudflare R2 | Готовые к публикации варианты |
-| Все данные товаров | **PostgreSQL на Supabase** | Единый источник правды (слой 1: owner-ввод; слой 2: AI-обогащение) |
+| Все данные товаров | **PostgreSQL на Neon** | Единый источник правды |
 | Публичный каталог | BigCommerce CDN | Хостит изображения для сайта |
-| Маркетплейс | Amazon (FBM) | Продавец отгружает сам, split-pool инвентарь |
+| Маркетплейс | Amazon (FBA) | Отдельный инвентарь, отдельный склад |
 
 ---
 
@@ -259,13 +259,13 @@ Amazon Processing
 
 | Сервис | Роль | Стоимость старт |
 |--------|------|----------------|
-| **Supabase** | Managed PostgreSQL + Studio UI | Бесплатно → $25/мес |
-| **n8n CE** | Оркестрация всех потоков | Self-hosted VPS ~$5–10/мес |
+| **Neon** | Managed PostgreSQL | Бесплатно → $15/мес |
+| **n8n** | Оркестрация всех потоков | Docker локально = $0 |
 | **Cloudflare R2 / S3** | Хранение изображений | ~$0.015/GB/мес |
 | **Claude API** | Нормализация + генерация контента | ~$0.01–0.05 за карточку |
 | **Remove.bg** | Удаление фона | $0.2/фото или local AI |
 | **BigCommerce Standard** | Сайт + CDN | ~$29/мес |
-| **Amazon** | FBM + SP-API | 15% referral fee + $39.99/мес (уже оплачен) |
+| **Amazon** | FBA + SP-API | % с продаж + FBA fees |
 | **Google Forms / Drive** | Intake от авторов | Бесплатно |
 
 ---
@@ -314,30 +314,14 @@ incoming
 
 ## Порядок запуска
 
-1. **Supabase** → создать проект, базу `icon_store`, настроить RLS для owner-доступа, сохранить connection string
+1. **Neon** → создать проект, базу `icon_store`, app user, сохранить connection string
 2. **Google Form** → форма для авторов (факты отдельно от фото)
-3. **VPS** → развернуть n8n CE (`docker compose up -d`), настроить домен + SSL
-4. **Supabase Table Editor** → owner вводит первые строки напрямую, n8n читает из PostgreSQL
+3. **n8n локально** → `docker run -p 5678:5678 n8nio/n8n`
+4. **Pipeline Form → Sheets → n8n → Neon** → первый рабочий intake
 5. **S3/R2 bucket** → структура папок для мастеров и производных
-6. **Amazon** → GTIN Exemption → SP-API credentials → тестовый листинг 1 SKU вручную (см. SPEC-4)
-7. **BigCommerce API** → первая публикация карточки
-8. **Claude API** → автогенерация Amazon-compliant контента (schema-driven)
-
----
-
-## Карта документов
-
-| Файл | Роль |
-|------|------|
-| `MASTER-ARCHITECTURE-v4.md` | Полная архитектура — канон |
-| `PIPELINE-OVERVIEW.md` | **Этот файл** — оперативная суть |
-| `SPEC-1-CATALOG-DATA-MODEL.md` | Модель данных, поля PostgreSQL |
-| `SPEC-2-IMAGE-PIPELINE.md` | Обработка изображений, Sharp/R2 |
-| `SPEC-3-CONTENT-GENERATION.md` | Claude API, Amazon-compliant контент |
-| `SPEC-4-AMAZON-LAUNCH.md` | Операционный запуск Amazon, GTIN, Brand Registry |
-| `AGENTS.md` | Роли агентов, read/write order |
-| `ROADMAP.md` | Фазы и прогресс |
-| `OPEN-QUESTIONS.md` | Открытые решения |
+6. **BigCommerce API** → первая публикация карточки
+7. **Amazon** → Brand Approval → GTIN Exemption → SP-API credentials → первый листинг
+8. **Claude API** → автогенерация Amazon-compliant контента
 
 ---
 

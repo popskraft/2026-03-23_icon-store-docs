@@ -3,8 +3,6 @@ layout: document
 title: "Spec 4: Amazon Launch"
 description: "Amazon launch playbook, GTIN exemption path, and SP-API operations."
 permalink: /documents/spec-4-amazon-launch/
-doc_entry: true
-nav_order: 60
 source_file: "_docs/SPEC-4-AMAZON-LAUNCH.md"
 ---
 
