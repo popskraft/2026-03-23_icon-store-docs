@@ -1,28 +1,52 @@
 # SPEC-1: Модель данных каталога
 
 Статус: рабочий черновик (implementation-facing)
-Базис: `MASTER-ARCHITECTURE-v4.md` v4.2
+Базис: `MASTER-ARCHITECTURE-v4.md` v4.3
 Область: канонический реестр каталога, политика идентификаторов, владение полями, маппинг каналов, контракты импорта и обновлений
 
 ---
 
+## Часть A. Главное
+
+### 0.1 Краткое резюме
+
+- PostgreSQL on Supabase is the only source of truth.
+- Owner writes Layer 1 facts directly in Supabase Table Editor.
+- CSV / Excel are allowed only as supplier bulk-import inputs, not as owner source-of-truth tools.
+- Batch content review is done in CSV; Table Editor is for single-SKU fixes and exception handling.
+- Publish requires explicit gates, not just a generic `approved` status.
+- Amazon launch requires confirmed GTIN exemption and validated browse node before the first working batch publish.
+
+### 0.2 Ключевые контракты
+
+| Contract | Rule |
+|---|---|
+| Record identity | `icon_id` is immutable; `merchant_sku` is the main business key |
+| File identity | `icon_id` + immutable source file IDs win over folder names |
+| Batch review | `approval_source = csv_batch` for normal batch review; `table_editor_exception` only for exception handling |
+| Channel publish | `images_approved`, `content_approved`, `price_ready`, `inventory_ready`, and channel-specific approval flags are required |
+| Amazon gate | GTIN exemption confirmed, browse node validated, payload hash approved |
+| Sync safety | external API side effects run through durable sync states and reconciliation |
+
+---
+
+## Часть B. Детальный контракт
+
 ## 1. Назначение
 
-Канонические записи живут в PostgreSQL (Supabase). BigCommerce — слой публикации. Amazon SC — второй выходной канал. Все нижестоящие процессы (импорт, image processing, генерация контента, публикация, синдикация, batch-обновления) обязаны следовать этому контракту.
+Канонические записи живут в PostgreSQL (Supabase). BigCommerce и Amazon получают только производные публикационные представления. Все нижестоящие процессы обязаны следовать этому контракту.
 
 ---
 
 ## 2. Принципы проектирования
 
 1. Одна каноническая запись на каждый SKU.
-2. Единая политика идентификаторов во всех системах.
-3. Идентификаторы поставщика хранятся как внешняя ссылка, не становятся системным ключом.
-4. BigCommerce хранит только поля для commerce-публикации.
-5. Мастер-изображения и деривативы хранятся за пределами BigCommerce.
-6. Весь публичный текст генерируется из канонической записи и проходит human review.
-7. Пакетные операции идемпотентны и воспроизводимы.
-8. Двухслойная модель: Слой 1 — владелец вводит базовые факты; Слой 2 — n8n → Claude API обогащает контентом.
-9. PostgreSQL — единственный источник истины.
+2. PostgreSQL остаётся единственным источником истины.
+3. Идентификаторы поставщика хранятся как внешний reference, а не системный ключ.
+4. Batch review контента идёт через CSV; Table Editor используется только для exception handling.
+5. Publish разрешается только при полном наборе explicit gate flags.
+6. Любой внешний publish должен быть idempotent и reconciliation-safe.
+7. Изменение базовых фактов, изображений, цены или stock должно инвалидировать downstream readiness там, где это нужно.
 
 ---
 
@@ -32,24 +56,21 @@
 
 | Ограничение | Следствие |
 |---|---|
-| Продукты через V3 Catalog API | V3 — основной integration surface |
-| Продукт в нескольких категориях | Хранить `primary_category_id`, BC использует множественное назначение |
-| Variants — SKU-bearing с inventory | Variants для размерных вариантов |
-| Modifiers не меняют fulfillment SKU | Не использовать modifiers для инвентарных выборов |
-| Custom fields ≤ 250 символов | Только display-данные |
-| Metafields — скрытые | Для sync state, source refs, channel payloads |
-| Inventory API writes асинхронны | Сериализовать обновления инвентаря |
-| Rate limit: 150 req / 30 сек | Batch writers обязаны делать back off |
-| Bulk price-list upserts сериализованы | Не запускать параллельные bulk price операции |
+| V3 Catalog API | основной integration surface |
+| Variants — SKU-bearing с inventory | variants только для реальных inventory-различий |
+| Modifiers не меняют fulfillment SKU | не использовать modifiers для инвентарных выборов |
+| Custom fields ≤ 250 символов | только compact display data |
+| Inventory writes асинхронны | обновления инвентаря сериализуются |
+| Rate limit: 150 req / 30 сек | batch writers делают backoff |
 
 ### Amazon SP-API
 
 | Ограничение | Следствие |
 |---|---|
-| Listings Items API — основной путь | n8n → SP-API напрямую, без BC-коннектора |
-| GTIN Exemption для handmade religious | Получить до первого листинга (SPEC-4) |
-| FBM: продавец отгружает сам | `amazon_reserved` — логический резерв в PostgreSQL |
-| Атрибуты через Product Type Definitions API | Валидация схемы перед листингом |
+| Listings Items API — основной путь | `n8n -> SP-API` напрямую |
+| GTIN Exemption для handmade religious | hard prerequisite до первого publish |
+| Product Type Definitions API | browse node и required attributes проверяются до submit |
+| FBM | inventory и publish идут из PostgreSQL, не из Seller Central вручную |
 
 ---
 
@@ -59,20 +80,25 @@
 
 | Система | Роль |
 |---|---|
-| **PostgreSQL (Supabase)** | Канонический реестр. Источник истины. |
-| **Supabase Table Editor** | UI для владельца (Слой 1), точечных operator edits и exception handling |
-| Google Drive | Inbox входящих фото. Только handoff. |
-| S3/R2 | Утверждённые мастера и деривативы |
-| BigCommerce | Сторфронт (publication layer) |
-| Amazon Seller Central | Листинги + FBM |
-| n8n | Оркестрация batch |
-| Claude API | Генерация контента (Слой 2) |
+| PostgreSQL (Supabase) | канонический реестр и sync-control plane |
+| Supabase Table Editor | owner input, single-record correction, exception handling |
+| Google Drive | inbox входящих фото, только handoff |
+| S3/R2 | approved masters и derivatives |
+| BigCommerce | storefront publication layer |
+| Amazon Seller Central | marketplace presence + FBM operations |
+| n8n | orchestration, retries, reconciliation |
+| Claude API | Layer 2 content generation |
 
 ### 4.2 Поток данных
 
-```
-Владелец (Table Editor Слой 1) → PostgreSQL → n8n → Claude API (Слой 2) →
-→ Оператор review (CSV batch review + Table Editor for exceptions) → BigCommerce (n8n → BC API) + Amazon (n8n → SP-API)
+```text
+Owner direct entry in Supabase Table Editor or operator-led supplier import
+  -> PostgreSQL
+  -> n8n
+  -> Claude API (Layer 2)
+  -> operator review (CSV batch review; Table Editor only for exceptions)
+  -> BigCommerce (n8n -> BC API)
+  -> Amazon (n8n -> SP-API)
 ```
 
 ---
@@ -81,67 +107,71 @@
 
 Каждая запись иконы содержит:
 - `icon_id` — внутренний неизменяемый UUID
-- `merchant_sku` — первичный бизнес-ключ (`IC-000001`, с суффиксом `-S/M/L` для размерных вариантов)
-- `supplier_sku` — внешняя ссылка на поставщика, не PK
-- `product_family_id` — группировка вариантов одного дизайна
-- `bigcommerce_product_id`, `bigcommerce_variant_id` — назначаются после публикации
-- `asin` — назначается после создания Amazon листинга
+- `merchant_sku` — первичный бизнес-ключ (`IC-000001`, при необходимости с variant suffix)
+- `supplier_sku` — внешний reference на поставщика
+- `product_family_id` — группировка связанных вариантов
+- `bc_product_id`, `bc_variant_id` — появляются после публикации
+- `asin` — появляется после Amazon listing
 
-**Правила merchant_sku:** не кодировать семантику в SKU; не повторно использовать SKU удалённых товаров.
+Правила:
+- семантика не кодируется в `merchant_sku`
+- удалённый SKU не переиспользуется
+- папка и имя файла не являются источником истины
 
 ---
 
 ## 6. Icon Master Record — структура полей
 
 ### 6.1 Идентификаторы
-`icon_id` · `merchant_sku` · `supplier_sku` · `product_family_id` · `asin` · `bigcommerce_product_id` · `bigcommerce_variant_id`
 
-### 6.2 Базовые факты (Слой 1 — владелец)
+`icon_id` · `merchant_sku` · `supplier_sku` · `product_family_id` · `asin` · `bc_product_id` · `bc_variant_id`
+
+### 6.2 Базовые факты (Layer 1 — owner)
 
 | Поле | Описание |
 |---|---|
-| `title_raw` | Рабочее название от поставщика |
-| `saint_or_subject` | Кто или что изображено |
-| `feast` | Праздник или память |
-| `purpose` | Назначение иконы |
-| `style` | Стилистическая метка |
-| `iconographic_type` | Mother of God / Christ / Saint / Archangel и т.д. |
-| `material` | Основной материал |
-| `technique` | Техника исполнения |
+| `title_raw` | рабочее название от поставщика |
+| `saint_or_subject` | кто или что изображено |
+| `feast` | праздник или память |
+| `purpose` | назначение иконы |
+| `style` | стилистическая метка |
+| `iconographic_type` | базовый иконографический тип |
+| `material` | основной материал |
+| `technique` | техника исполнения |
 | `construction_type` | flat-board / triptych / travel и т.д. |
-| `origin_school` | Школа или традиция |
-| `size_w_mm`, `size_h_mm`, `size_d_mm` | Размеры в мм |
-| `weight_g` | Вес в граммах |
-| `manufacturer` | Автор или мастерская |
-| `base_cost` | Закупочная стоимость |
-| `notes` | Произвольные операционные заметки |
+| `origin_school` | школа или традиция |
+| `size_w_mm`, `size_h_mm`, `size_d_mm` | размеры в мм |
+| `weight_g` | вес в граммах |
+| `manufacturer` | автор или мастерская |
+| `base_cost` | закупочная стоимость |
+| `notes` | операционные заметки |
 
 ### 6.3 Медиа
 
 | Поле | Описание |
 |---|---|
 | `source_system` | `google_drive` / `email` / `s3_upload` / `manual` |
-| `source_folder_id`, `source_file_id`, `source_filename` | Ссылка на источник |
-| `received_at`, `incoming_hash` | Время приёма и хэш |
-| `approved_master_uri`, `approved_master_hash` | Утверждённый мастер в S3/R2 |
-| `derivatives` | JSON: имя деривата → URI |
-| `image_qa_status` | `incoming` / `retouch_required` / `processing` / `media_blocked` / `media_partial` / `media_ready` / `approved` / `rejected` |
-| `image_qa_notes`, `last_processed_at` | QA заметки и время обработки |
+| `source_folder_id`, `source_file_id`, `source_filename` | immutable source references |
+| `received_at`, `incoming_hash` | время приёма и хэш |
+| `approved_master_uri`, `approved_master_hash` | approved master в S3/R2 |
+| `derivatives` | JSON: derivative name -> URI |
+| `image_qa_status` | `incoming` / `retouch_required` / `processing` / `media_blocked` / `media_partial` / `approved` / `rejected` |
+| `image_qa_notes`, `last_processed_at` | QA notes и время обработки |
 
-### 6.4 Контент (Слой 2 — AI-обогащение)
+### 6.4 Контент (Layer 2 — AI enrichment)
 
 | Поле | Описание |
 |---|---|
-| `content_version`, `content_status` | `not_started` / `generating` / `review` / `approved` / `published` |
-| `approved_by`, `approved_at`, `review_notes` | Трассировка approval |
-| `site_title_en`, `site_description_html_en` | Контент сторфронта |
-| `meta_title_en`, `meta_description_en` | SEO поля |
-| `amazon_title`, `amazon_bullet_1..5` | Amazon title и буллеты |
-| `amazon_description_html`, `amazon_backend_search_terms` | Amazon описание и ключевые слова |
-| `amazon_browse_node`, `amazon_item_type_keyword`, `amazon_target_marketplace` | Категоризация Amazon |
-| `amazon_payload` | Полный JSON-payload для SP-API |
-| `category_primary`, `faceted_filters` | Внутренняя категория и фасеты |
-| `compliance_flags` | Флаги review для рискованных утверждений |
+| `content_version`, `content_status` | `not_started` / `generating` / `needs_review` / `approved` / `published` |
+| `approved_by`, `approved_at`, `approval_source`, `review_notes` | трассировка approval |
+| `site_title_en`, `site_description_html_en` | storefront content |
+| `meta_title_en`, `meta_description_en` | SEO |
+| `amazon_title`, `amazon_bullet_1..5` | Amazon title and bullets |
+| `amazon_description_html`, `amazon_backend_search_terms` | Amazon description and keywords |
+| `amazon_browse_node`, `amazon_item_type_keyword`, `amazon_target_marketplace` | Amazon categorization |
+| `amazon_payload` | JSON payload for SP-API |
+| `category_primary`, `faceted_filters` | internal category and filters |
+| `compliance_flags` | review flags |
 
 ### 6.5 Ценообразование
 
@@ -151,99 +181,118 @@
 
 | Поле | Описание |
 |---|---|
-| `site_stock`, `amazon_reserved` | Логические резервы (единый физический склад) |
-| `reorder_point`, `supplier_lead_time_days` | Пополнение |
+| `physical_on_hand`, `site_stock`, `site_reserved`, `amazon_reserved`, `committed`, `released` | lifecycle физического stock, site allocation и логических резервов |
+| `available_to_allocate`, `inventory_version` | расчёт доступности и optimistic locking |
+| `reorder_point`, `supplier_lead_time_days` | пополнение |
+| `images_approved`, `content_approved`, `price_ready`, `inventory_ready` | readiness flags |
+| `bc_publish_approved`, `amazon_publish_approved` | channel approvals |
+| `approved_payload_hash`, `published_payload_hash` | контроль publish drift |
 | `bc_status` | `draft` / `published` / `archived` |
 | `amazon_status` | `not_listed` / `pending` / `live` / `suppressed` / `live_manual` |
-| `last_hash`, `last_synced_at`, `last_batch_id` | Sync audit |
-| `sync_error_code`, `sync_error_message` | Текущая ошибка |
+| `sync_state`, `workflow_run_id`, `step_name`, `step_attempt`, `idempotency_key` | durable sync contract |
+| `bc_sync_version`, `amazon_sync_version`, `last_hash`, `last_synced_at`, `last_batch_id` | sync audit and versioning |
+| `sync_error_code`, `sync_error_message` | текущая ошибка |
 
 ---
 
 ## 7. Владение полями
 
-| Группа | PostgreSQL | BigCommerce | Amazon |
+| Группа | Кто владеет | Что можно делать | Что блокирует / инвалидирует |
 |---|---|---|---|
-| Идентификаторы | ✅ источник | SKU поля | Listing SKU / ASIN |
-| Базовые факты (Слой 1) | ✅ источник | Покупательское подмножество | Подмножество payload |
-| Мастера URI | ✅ + S3/R2 | Не источник | Не источник |
-| Деривативы URI | ✅ + S3/R2 | Published copies | Image payload |
-| Контент (Слой 2) | ✅ источник | name, description, SEO, metafields | title, bullets, keywords |
-| Инвентарь | ✅ источник | `site_stock` | `amazon_reserved` |
-| Цены | ✅ источник | Product price | Listing price |
-| Sync state | ✅ источник | `ops.sync` metafields | Listing status refs |
+| Layer 1 базовые факты | Owner | прямой ввод и правка до content approval | изменение после content approval сбрасывает derived content и publish-ready |
+| AI content fields | System | генерирует и обновляет только через workflow | не публикуется без human approval |
+| Approval и override fields | Operator | approve, reject, exception edits, channel gates | существенное изменение данных сбрасывает gates |
+| Sync fields | System | ведёт sync states и версии | ручная правка только для incident repair |
+| Inventory fields | System + operator under SOP | авто sync и ручная корректировка по runbook | конфликт версий требует reconcile before publish |
+
+Правило инвалидации:
+- изменение owner input после `content_approved = true` сбрасывает `content_approved`, `bc_publish_approved`, `amazon_publish_approved`
+- изменение approved image сбрасывает image-derived readiness
+- изменение цены или stock сбрасывает `approved_payload_hash` для зависимых каналов
 
 ---
 
 ## 8. Маппинг BigCommerce
 
-### Product object
+### 8.1 Product object
 
 | Поле BC | Источник |
 |---|---|
 | `name` | `site_title_en` |
 | `sku` | `merchant_sku` |
 | `price` | `site_price` |
-| `weight` | `weight_g` → конвертировать в единицы BC |
+| `weight` | `weight_g` converted to BC units |
 | `page_title` | `meta_title_en` |
 | `meta_description` | `meta_description_en` |
-| `custom_fields` | Компактные видимые покупателю факты (≤ 250 символов) |
-| `metafields` | Операционные данные по неймспейсам |
+| `custom_fields` | compact customer-visible facts |
+| `metafields` | operational data by namespace |
 
-**Variants vs Modifiers:** Variant — если выбор меняет SKU, инвентарь, цену или fulfillment. Modifier — только если выбор видим покупателю, но не меняет инвентарь.
-
-**Metafield namespaces:** `ops.review` · `ops.sync` · `media.storage` · `content.amazon` · `content.site` · `catalog.source`
-
-**Изображения:** BigCommerce хранит только published copies. Master URI и хэши — в PostgreSQL.
-
-**Инвентарь:** только `site_stock`. `amazon_reserved` — только в PostgreSQL и Amazon state. Сериализовать inventory writes.
+Rules:
+- variant only if selection changes SKU, price, inventory, or fulfillment
+- modifier only if selection is display-only
+- BigCommerce stores published copies, not canonical masters
 
 ---
 
-## 9. Batch: типы, контракт, порядок
+## 9. Batch contract and idempotency
 
-### Типы batch
+### 9.1 Типы batch
 
-| Тип | Назначение |
-|---|---|
-| `source-import` | Нормализовать данные поставщика в master record |
-| `image-ingest` | Принять и утвердить image assets |
-| `content-generate` | Генерировать контент (Слой 2) |
-| `content-republish` | Пересобрать утверждённые версии |
-| `bc-publish` | Создать или обновить продукты в BigCommerce |
-| `amazon-syndicate` | Подготовить или обновить Amazon listing payloads |
-| `price-update` | Применить rule-driven изменения цен |
-| `inventory-sync` | Согласовать остатки |
-| `media-refresh` | Перегенерировать деривативы из утверждённых мастеров |
+`source-import` · `image-ingest` · `content-generate` · `content-republish` · `bc-publish` · `amazon-syndicate` · `price-update` · `inventory-sync` · `media-refresh`
 
-### Порядок выполнения
+### 9.2 Порядок выполнения
 
-`source-import` → `image-ingest` → `content-generate` → `bc-publish` → `amazon-syndicate` → `price-update` → `inventory-sync`
+`source-import` -> `image-ingest` -> `content-generate` -> `bc-publish` -> `amazon-syndicate` -> `price-update` -> `inventory-sync`
 
-### Правила идемпотентности
+### 9.3 Правила идемпотентности
 
-- Повторный запуск с тем же input hash — безопасен.
-- Неизменённые строки — no-op.
-- Строка с ошибкой валидации отклоняется, не останавливает batch.
-- Back off на 429; сериализовать bulk inventory и price-list upserts.
+- повторный запуск с тем же input hash безопасен
+- неизменённые строки дают no-op
+- строка с validation error не роняет весь batch
+- `idempotency_key` обязателен на шаге публикации и channel update
+- `sync_state` использует: `pending_sync` / `sync_in_progress` / `sync_succeeded` / `sync_failed_transient` / `sync_failed_terminal`
+- внешний publish считается завершённым только после reconciliation step
 
 ---
 
 ## 10. Ворота валидации
 
-**Для создания записи:** `merchant_sku` · `title_raw` · `saint_or_subject` · `material` или `technique` · `size_w_mm`, `size_h_mm`
+### 10.1 Для создания записи
 
-**Для публикации в сторфронт:** approved English title + description · publishable image · storefront category · valid `site_price` · `bc_status = published`
+`merchant_sku` · `title_raw` · `saint_or_subject` · `material` или `technique` · `size_w_mm` · `size_h_mm`
 
-**Для Amazon:** approved Amazon title + bullets · Amazon-совместимое main image (белый фон) · browse node · item type keyword · compliance review завершён
+### 10.2 Для публикации в BigCommerce
 
-**Жёсткие ограничения:** custom fields ≤ 250 символов; цена decimal precision 4 знака; не использовать modifiers для инвентарных выборов.
+`images_approved = true` · `content_approved = true` · `price_ready = true` · `inventory_ready = true` · `bc_publish_approved = true`
+
+### 10.3 Для публикации в Amazon
+
+storefront gate + `amazon_publish_approved = true` · approved Amazon title + bullets · Amazon-compatible main image · validated browse node · item type keyword · GTIN exemption confirmed · approved payload hash
 
 ---
 
-## 11. Таблицы PostgreSQL
+## 11. Constraints And Auditability
 
-`icons` · `pricing_rules` · `pricing_snapshots` · `inventory_snapshots` · `batch_runs` · `batch_items` · `content_versions` · `audit_log` · `alert_events`
+### 11.1 Required constraints
+
+- `UNIQUE (merchant_sku)`
+- `UNIQUE (asin) WHERE asin IS NOT NULL`
+- `UNIQUE (bc_product_id) WHERE bc_product_id IS NOT NULL`
+- non-negative checks for stock, reserves, prices, and base cost
+- schema validation or equivalent contract for `derivatives` and `amazon_payload`
+
+### 11.2 Таблицы PostgreSQL
+
+`icons` · `pricing_rules` · `pricing_snapshots` · `inventory_snapshots` · `batch_runs` · `batch_items` · `content_versions` · `audit_log` · `icon_status_audit` · `alert_events`
+
+`icon_status_audit` logs:
+- actor
+- action
+- old_value
+- new_value
+- reason
+- timestamp
+- workflow_run_id
 
 ---
 
@@ -251,4 +300,4 @@
 
 1. Один SKU на размер или family с size variants?
 2. Price Lists на запуске или отложить?
-3. Варианты рамки/оклада — variants или отдельные SKU?
+3. Варианты рамки или оклада — variants или отдельные SKU?

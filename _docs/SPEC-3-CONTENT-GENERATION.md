@@ -1,83 +1,89 @@
 # SPEC-3: Генерация контента
 
-Версия: 2.0
-Статус: рабочий черновик (parallel workstream)
+Версия: 3.0
+Статус: рабочий черновик (implementation-facing)
 Язык: русский
-Базис: `MASTER-ARCHITECTURE-v4.md` v4.2
-Область: жизненный цикл контента, промпты, глоссарий, review workflow, версионирование, batch генерация
+Базис: `MASTER-ARCHITECTURE-v4.md` v4.3
+Область: жизненный цикл контента, prompt contract, review workflow, версионирование, batch generation
 
 ---
+
+## Часть A. Главное
+
+### 0.1 Краткое резюме
+
+- Layer 1 facts are canonical; generated text is derived data.
+- Batch review is CSV-first.
+- Table Editor is only for single-SKU fixes, overrides, and exception handling.
+- Amazon and storefront content are generated independently from the same facts.
+- Human approval is required before publish.
+
+### 0.2 Каноническое правило review
+
+| Scenario | Canonical tool |
+|---|---|
+| Batch review | CSV review pack |
+| One SKU quick fix | Supabase Table Editor |
+| Exception handling | Supabase Table Editor |
+
+`approval_source` must record which route was used.
+
+---
+
+## Часть B. Детальный контракт
 
 ## 1. Назначение
 
-Система берёт базовые факты иконы (Слой 1) и превращает их в канально-специфичный, версионированный, одобренный оператором контент (Слой 2): site + Amazon + SEO. Слой 1 описан в SPEC-1.
+Система берёт Layer 1 facts и превращает их в channel-specific, versioned, operator-approved content for site and Amazon.
 
 ---
 
-## 2. Архитектурный контекст (v4.2)
+## 2. Архитектурный контекст
 
-- PostgreSQL — источник истины. `Icon Master Record` — исходный объект.
-- BigCommerce и Amazon — publication channels, не источники истины.
-- Контент Amazon и контент сайта генерируются независимо из одних базовых фактов.
-- Human review обязателен перед публикацией на Amazon.
-- Финальный контент — US English. `site_ru` — не launch output.
-- Supabase Table Editor — UI для review: Слой 1 и Слой 2 рядом в одном интерфейсе.
-
----
-
-## 3. Принципы
-
-1. Базовые факты (Слой 1) — каноническая истина. Сгенерированный текст — производные данные.
-2. Каждый generated output — структурированный, machine-validatable.
-3. Human review обязателен перед Amazon.
-4. Ручные правки переживают регенерацию (кроме случаев инвалидации policy).
-5. Ограничения платформ соблюдаются при генерации, не после публикации.
-6. Один reusable prompt template на content family.
-7. Те же базовые факты дают семантически согласованные outputs для сайта и Amazon.
+- PostgreSQL is the source of truth.
+- BigCommerce and Amazon are publication targets.
+- Final launch content is US English.
+- `site_ru` is not a launch output.
+- Content approval and publish approval are separate decisions.
 
 ---
 
-## 4. Минимальный набор входных данных
+## 3. Principles
 
-**Обязательные поля (Слой 1) для запуска генерации:**
-`merchant_sku` · `title_raw` · `saint_or_subject` · `material` · `technique` · `size_w_mm`, `size_h_mm` · `manufacturer`
-
-**При наличии добавляют:** `feast` · `purpose` · `style` · `iconographic_type` · `construction_type` · `origin_school` · `weight_g`
-
-Если сгенерированный контент будет слишком generic — запись остаётся `needs_review` до получения дополнительных фактов.
-
----
-
-## 5. Ограничения платформ
-
-**BigCommerce:** custom fields ≤ 250 символов; rate limit 150 req / 30 сек.
-
-**Amazon:** title ≤ 200 символов; backend search terms ≤ 250 байт; повторение слов в title ограничено; main image — белый фон, без логотипов. Генерировать policy-aware payloads без расчёта на ручную чистку.
+1. Source facts win over generated text.
+2. Generated output must be structured and machine-validatable.
+3. Human review is mandatory before publish.
+4. Manual operator edits must survive regeneration unless explicitly invalidated.
+5. Platform limits are enforced before publish, not after.
 
 ---
 
-## 6. Глоссарий
+## 4. Minimum input set
 
-Контролируемый глоссарий обеспечивает консистентность по всему каталогу.
+Required to start generation:
+- `merchant_sku`
+- `title_raw`
+- `saint_or_subject`
+- `material`
+- `technique`
+- `size_w_mm`
+- `size_h_mm`
+- `manufacturer`
 
-**Канонические термины:** `Theotokos` / `Mother of God` · `Jesus Christ` · `Holy Trinity` · `Archangels` · `Byzantine icon` · `Orthodox icon` · `hand-painted` · `wooden board icon`
-
-**Правила:**
-- Один предпочтительный display name на канонический предмет.
-- Синонимы допустимы в search terms, но не смешиваются в опубликованный title.
-- Глоссарий версионируется как код.
+If facts are too weak, record stays in `needs_review` instead of publishing generic content.
 
 ---
 
-## 7. Контракт вывода
+## 5. Output contract
 
 ```json
 {
   "sku": "IC-000001",
   "source_hash": "sha256:...",
   "content_version": 1,
-  "generated_at": "2026-03-24T00:00:00Z",
+  "generated_at": "2026-03-25T00:00:00Z",
   "review_status": "needs_review",
+  "approval_source": null,
   "amazon": {
     "title": "",
     "bullets": ["", "", "", "", ""],
@@ -85,7 +91,6 @@
     "backend_search_terms": "",
     "browse_node": "",
     "item_type_keyword": "",
-    "target_marketplace": "US",
     "payload": {}
   },
   "site": {
@@ -103,83 +108,86 @@
 }
 ```
 
-**BigCommerce маппинг:** `site.title` → `name`; `site.description_html` → `description`; `site.meta_title` → `page_title`; `site.meta_description` → `meta_description`.
+---
 
-**Amazon payload** хранится в `amazon_payload` Icon Master Record — готовый объект для `PUT /listings/2021-08-01/items/{sellerId}/{sku}`.
+## 6. Review workflow
+
+### 6.1 Statuses
+
+`not_started` -> `generating` -> `needs_review` -> `approved`
+
+Publication state is tracked separately from generation state.
+
+### 6.2 Batch review
+
+Primary review path:
+- n8n generates JSONL + CSV pack
+- operator reviews CSV
+- operator sets `APPROVE`, `REJECT`, or `REGEN`
+- system writes back result and `approval_source = csv_batch`
+
+### 6.3 Single-SKU correction
+
+Allowed only when:
+- one record needs a quick fix
+- batch review already happened
+- operator is resolving an exception
+
+Then `approval_source = table_editor_exception`.
+
+### 6.4 Approval trace
+
+Track:
+- approver
+- timestamp
+- approval source
+- content version
+- source hash
+- review notes
 
 ---
 
-## 8. Режимы генерации
+## 7. Platform limits
 
-| Режим | API | Когда |
-|---|---|---|
-| Синхронный | Messages API | ≤ 10 SKU, test runs, single regen |
-| Batch | Message Batches API | > 10 SKU, ночные refreshes |
-| Tool-assisted | Messages API + tools | Только если снижает error rate |
+### 7.1 BigCommerce
 
-Batch: до 100 000 запросов, обработка до 24 ч, результаты JSONL с `custom_id` на SKU.
+- custom fields <= 250 chars
 
----
+### 7.2 Amazon
 
-## 9. Review workflow
-
-### Статусы
-
-`not_started` → `generating` → `needs_review` → `approved` → `published` / `rejected`
-
-Primary review для батчей идёт через CSV summary pack. Supabase Table Editor используется для точечных правок и exception handling по отдельным SKU.
-
-### Review pack (per batch)
-
-- JSONL для machine parsing
-- CSV summary для human review (колонки: sku, amazon_title, bullet_1..5, site_title, compliance_flags, decision, review_notes)
-- Exception report по failed / ambiguous items
-
-### Правила review
-
-- Нарушены Amazon limits → reject или regen.
-- Контент изобретает факты отсутствующие в source → reject.
-- Семантически верен, но неудачно сформулирован → approve с минорными правками.
-
-### Трассировка approval
-
-Записывает: approver · timestamp · review_notes · content_version · source_hash.
+- title <= 200 chars
+- backend search terms <= 250 bytes
+- no prohibited promotional language
+- no invented facts
+- main image rules are enforced upstream in Spec-2
 
 ---
 
-## 10. Версионирование
+## 8. Regeneration rules
 
-- Каждая регенерация инкрементирует `content_version` при значимом изменении payload.
-- Хранится последний approved snapshot для rollback.
-- Publication state отдельен от generation state: контент может быть approved, но не опубликован.
-- Rollback восстанавливает последний **approved** snapshot, не последний draft.
+Regenerate when:
+- Layer 1 facts changed
+- glossary changed
+- platform policy changed
+- approved image changed and wording depends on image
 
----
-
-## 11. Правила регенерации
-
-**Регенерировать при:** изменении базовых фактов (Слой 1); изменении глоссарного термина; обновлении Amazon policy; изменении approved master и image-dependent wording.
-
-**Не регенерировать при:** только форматировании; наличии human override; изменении касающемся только одного канала.
-
-Автоматическая регенерация не перетирает approved human edit без записи причины.
+Do not auto-overwrite approved human edits without recording why.
 
 ---
 
-## 12. Правила валидации
+## 9. Validation rules
 
-Генератор обязан reject / flag outputs, которые:
-- превышают Amazon title или search term limits
-- используют запрещённый promotional language
-- чрезмерно повторяют слова в title
-- ссылаются на недоступные утверждения о материалах или провенансе
-- противоречат source record
-- содержат HTML в полях где target его не поддерживает
+Reject or flag output when it:
+- exceeds platform limits
+- repeats keywords unnaturally
+- invents provenance or material claims
+- contradicts source facts
+- uses unsupported HTML
 
 ---
 
-## 13. Открытые решения
+## 10. Открытые вопросы
 
-- Финальный brand tone of voice для US-рынка?
-- `Virgin Mary` как контролируемый SEO-синоним или только `Theotokos`?
-- Автоматическая регенерация при изменении глоссария — или только с approve оператора?
+1. Final US tone of voice for launch copy.
+2. Controlled synonym policy for `Theotokos` vs `Virgin Mary`.
+3. Auto-regeneration policy after glossary updates: automatic or operator-confirmed.

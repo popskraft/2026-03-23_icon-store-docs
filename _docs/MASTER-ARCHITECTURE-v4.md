@@ -1,12 +1,14 @@
 # MASTER-ARCHITECTURE-v4.md
 
-> **Версия:** 4.2 — все спецификации приведены к каноническому формату (стандартный заголовок + раздел "Архитектурный контекст v4.2"), пройдена редакторская минимизация: удалены туториалы и объяснения для новичков, сохранены все операционные схемы, контракты, таблицы статусов. Корпус документации стабилен.
+> **Версия:** 4.3 — вынесен отдельный обязательный process guide, верхний слой документации упрощён, audit-правки интегрированы в канон.
 > **Автор:** Claude Sonnet 4.6
-> **Дата:** 2026-03-24
+> **Дата:** 2026-03-25
 > **Статус:** Стабильный канон. Заменяет v4.1.
 > **Предыдущие версии:** v1 (Codex), v2 (merged), v3 (ролевая модель + потоки), v4.1 (спецификации skeleton) — архивированы, не удалять
 
 ---
+
+## Часть A. Главное
 
 ## 1. Что это за система
 
@@ -20,40 +22,23 @@
 - автогенерация текстов под каждый канал (Amazon и сайт — независимо)
 - пакетная публикация и обновления без ручной работы
 
----
+### 1.1 Что читать первым
 
-### 1.1 Карта пайплайна — общий вид
+Если нужно понять систему за одну минуту, сначала читать `PROCESS-FLOW.md`.
+Этот файл больше не хранит полную карту процесса и не дублирует operator flow.
+Он фиксирует архитектурные правила, роли, стек и границы.
 
-```
-Поставщик → Google Drive (фото) ──────────────────────────────┐
-                                                               │
-Владелец → Supabase Table Editor (базовые факты иконы)        │
-               │                                              │
-               ▼                                              ▼
-         PostgreSQL                              Обработчик изображений
-     (Icon Master Record)                    (Lightroom → approved master)
-               │                                              │
-               │◄─────────────────── S3/R2 ──────────────────┘
-               │                  (мастера + деривативы)
-               │
-         n8n → Claude API
-         (обогащение: title_en, description, bullets,
-          category, faceted filters, Amazon payload)
-               │
-         Оператор review
-         (CSV review pack для батчей; Table Editor для
-          точечных правок и exception handling)
-               │
-      ┌────────┴────────┐
-      ▼                 ▼
- BigCommerce        Amazon SP-API
- (n8n → BC API)    (n8n → Listings API)
- независимо        независимо
-```
+### 1.2 Ключевые правила
+
+- PostgreSQL on Supabase is the only source of truth.
+- Owner intake идёт только через Supabase Table Editor.
+- CSV review pack — канонический batch-review для контента; Table Editor используется только для single-SKU correction и exception handling.
+- Amazon publish path всегда один: `manual operator approval -> automated n8n -> SP-API submit`.
+- GTIN Exemption и validated browse node обязательны до первого рабочего Amazon batch publish.
 
 ---
 
-### 1.2 Двухслойная модель данных
+### 1.3 Двухслойная модель данных
 
 Каждая карточка иконы наполняется в два этапа одного PostgreSQL-рекорда:
 
@@ -66,25 +51,24 @@
 
 ---
 
-### 1.3 Карта документов
+### 1.4 Карта документов
 
 | Файл | Роль |
 |------|------|
 | **`MASTER-ARCHITECTURE-v4.md`** | **Этот файл** — executive layer, роли, принципы, стек, решения |
+| `PROCESS-FLOW.md` | Самый короткий сквозной процесс: 1-minute flow, human gates, process map |
 | `SPEC-1-CATALOG-DATA-MODEL.md` | Модель данных, поля PostgreSQL, BigCommerce mapping |
 | `SPEC-2-IMAGE-PIPELINE.md` | Обработка изображений, Python worker, S3/R2 структура |
 | `SPEC-3-CONTENT-GENERATION.md` | Claude API, промпты, глоссарий, review workflow |
 | `SPEC-4-AMAZON-LAUNCH.md` | Операционный запуск Amazon: GTIN, Brand Registry, SP-API |
-| `SPEC-5-PIPELINES.md` | Все 7 пайплайнов (A–G) — детальные n8n workflows |
+| `SPEC-5-PIPELINES.md` | Все 7 пайплайнов (A–G), channel gates, sync and retry rules |
 | `SPEC-6-STOREFRONT.md` | Storefront IA & SEO (Phase 2 skeleton) |
-| `SPEC-7-OPERATOR-PLAYBOOK.md` | Процедуры оператора, статусная матрица, SQL quick ref |
+| `SPEC-7-OPERATOR-PLAYBOOK.md` | Процедуры оператора, human gates, daily routine, incident handling |
 | `AGENTS.md` | Роли агентов, архитектурные решения (краткий канон) |
 | `ROADMAP.md` | Фазы, прогресс, decision log |
 | `OPEN-QUESTIONS.md` | Открытые и закрытые решения |
 
----
-
-### 1.4 Порядок запуска (Phase 2)
+### 1.5 Порядок запуска (Phase 2)
 
 1. **Supabase** → создать проект, применить DDL из Spec-1, настроить RLS для owner-доступа
 2. **Google Drive** → папки `incoming/` и `approved/` для фото
@@ -93,12 +77,13 @@
 5. **Владелец вводит первые 10 SKU** → Supabase Table Editor (Слой 1)
 6. **n8n запускает AI-обогащение** → Claude API заполняет Слой 2
 7. **Оператор review** → CSV review pack (`APPROVE / REJECT / REGEN`), точечные правки через Table Editor
-8. **Amazon** → GTIN Exemption → тестовый листинг 1 SKU (SPEC-4)
+8. **Amazon prerequisites** → GTIN Exemption + browse node validation + canary listing 1 SKU
 9. **BigCommerce** → первая публикация карточки
+10. **Amazon** → первая рабочая публикация через n8n -> SP-API
 
 ---
 
-### 1.5 Инфраструктура и стоимость
+### 1.6 Инфраструктура и стоимость
 
 | Сервис                   | Роль                                              | Старт                        |
 | ------------------------ | ------------------------------------------------- | ---------------------------- |
@@ -112,6 +97,8 @@
 | **Google Drive**         | Inbox для входящих фото                           | Бесплатно                    |
 
 ---
+
+## Часть B. Архитектурный контракт
 
 ## 2. Роли в системе
 
@@ -287,10 +274,15 @@
 5. **Три стадии изображения** — Incoming → Approved Master → Published Derivatives. Смешивать нельзя.
 6. **Каждый батч перезапускаем** — сбой не портит состояние, процесс возобновляется с последнего успешного шага.
 7. **Человек подтверждает перед Amazon** — ни один AI-текст не уходит в листинг без явного approve оператора.
-8. **Каналы изолированы** — текст для Amazon и текст для сайта генерируются независимо из одних исходных фактов.
-9. **Цена живёт в мастер-карточке** — не в BigCommerce напрямую. Изменение правила → пакетное обновление всех каналов.
-10. **Минимум технологий** — каждый компонент должен быть заменим без переписывания всего.
-11. **Рабочая документация на русском** — финальные артефакты для публикации на английском.
+8. **Review mode один на каждый сценарий** — batch review идёт через CSV, single-record correction идёт через Table Editor.
+9. **Publish gates хранятся явно** — канал не публикуется только потому, что контент "approved"; нужен полный publish predicate по данным, цене, stock и явному channel approval.
+10. **Image identity держится не на папке** — `icon_id` и immutable source file IDs важнее SKU path и folder rename.
+11. **Внешний side effect должен быть reconcile-safe** — внешний API вызывается только из durable sync-state, а не из "мгновенного" статуса записи.
+12. **GTIN Exemption и browse node validation — prerequirements** — не runtime surprise, а hard gate до первого рабочего Amazon batch publish.
+13. **Каналы изолированы** — текст для Amazon и текст для сайта генерируются независимо из одних исходных фактов.
+14. **Цена живёт в мастер-карточке** — не в BigCommerce напрямую. Изменение правила → пакетное обновление всех каналов.
+15. **Минимум технологий** — каждый компонент должен быть заменим без переписывания всего.
+16. **Рабочая документация на русском** — финальные артефакты для публикации на английском.
 
 ---
 
@@ -313,7 +305,7 @@
 
 ## 5. Центральный объект: Icon Master Record
 
-Каноническая карточка иконы — главный объект всей системы. Из неё рождаются тексты, изображения, цены и публикации. Живёт в PostgreSQL. Полная DDL — в **Spec-1 (раздел 15)**.
+Каноническая карточка иконы — главный объект всей системы. Из неё рождаются тексты, изображения, цены и публикации. Живёт в PostgreSQL. Полная DDL и data contract — в **Spec-1**.
 
 ### 5.1 Идентичность
 
@@ -549,7 +541,7 @@ services:
 | BigCommerce | Catalog r/w, Order r, Webhook w |
 | S3 / R2 | Upload, read, list — не delete |
 | Claude API | Messages + Batches |
-| Amazon SP-API | Catalog Items r; Listings w только после пилота; Orders r (FBM) |
+| Amazon SP-API | Catalog Items r; Listings w; Orders r (FBM) |
 
 ---
 
@@ -580,22 +572,22 @@ services:
 |------|--------|-------------|
 | UX ревью-процесса (daily approve/reject) | ✅ Закрыто | Spec-3: CSV-based review для MVP |
 | Ценовые правила и формула маржи | ✅ Закрыто | Раздел 8 + Spec-1 (pricing_rules DDL) |
-| PostgreSQL DDL полная | ✅ Закрыто | Spec-1 (раздел 15) |
-| BigCommerce field map | ✅ Закрыто | Spec-1 (раздел 15) |
-| Prompt-шаблон для генерации | ✅ Закрыто | Spec-3 (раздел 17) |
-| Иконографический глоссарий | ✅ Закрыто | Spec-3 (раздел 17) |
-| S3/R2 структура файлов | ✅ Закрыто | Spec-2 (раздел 16) |
+| PostgreSQL DDL полная | ✅ Закрыто | Spec-1 |
+| BigCommerce field map | ✅ Закрыто | Spec-1 |
+| Prompt-шаблон для генерации | ✅ Закрыто | Spec-3 |
+| Иконографический глоссарий | ✅ Закрыто | Spec-3 |
+| S3/R2 структура файлов | ✅ Закрыто | Spec-2 |
 | Путь синдикации Amazon | ✅ Закрыто | n8n → SP-API напрямую (2026-03-23) |
 | Модель фулфилмента | ✅ Закрыто | FBM, не FBA (2026-03-23) |
 | Модель инвентаря | ✅ Закрыто | Единый склад, два логических резерва (раздел 7 Pipeline F) |
-| Процедура оператора end-to-end | ✅ Закрыто | Spec-5 (раздел 19) |
-| Amazon browse node mapping | ⚠️ Частично | Spec-4 (раздел 18): подход определён; node IDs — после пилота |
+| Процедура оператора end-to-end | ✅ Закрыто | PROCESS-FLOW + Spec-7 |
+| Amazon browse node mapping | ⚠️ Частично | Подход определён; final node ID должен быть подтверждён до первого рабочего batch publish |
 | GTIN Exemption | ⚠️ Действие | Нужно подать в SC до первой публикации |
 | SP-API credentials & scopes | ⚠️ Действие | Настроить в n8n перед пилотом |
 | Runbook восстановления PostgreSQL | ❌ Открыто | Нужен отдельный операционный документ |
 | Кто занимается exception triage | ❌ Открыто | Ждёт owner |
 | Порог миграции с BigCommerce Standard | ⚠️ Default | ~$50K GMV / год |
-| n8n workflow groups (структура) | ✅ Закрыто | Spec-3 (раздел 17) + Spec-5 (раздел 19) |
+| n8n workflow groups (структура) | ✅ Закрыто | Spec-5 |
 
 ---
 
@@ -631,9 +623,9 @@ services:
 | ⚠️ | Retry thresholds (3 попытки) — валидировать на пилоте |
 | ⚠️ | Порог батча (> 10 SKU → Batches API) — валидировать |
 | ⚠️ | Alert thresholds (сайт < 3, amazon_reserved < 3) — настроить под реальную экономику |
-| ⚠️ | n8n hosting: self-hosted vs Cloud — ждёт owner |
+| ✅ | n8n hosting: self-hosted CE on VPS — confirmed |
 | ⚠️ | Budget ceiling ($104–137/month) — ждёт owner |
-| ⚠️ | Amazon browse node: research approach определён, финальный node ID — после пилота |
+| ⚠️ | Amazon browse node: research approach определён, финальный node ID нужен до первого рабочего batch publish |
 
 ---
 
@@ -642,7 +634,7 @@ services:
 1. **[ДЕЙСТВИЕ]** Получить GTIN Exemption в Amazon Seller Central (handmade religious items) — разблокирует первый листинг
 2. **[ДЕЙСТВИЕ]** Настроить SP-API credentials в n8n (Listing w + Orders r/w) — разблокирует Пайплайн E
 3. **[Параллельно]** Запустить 10-SKU пилот по Spec-1 + Spec-2 + Spec-3: PostgreSQL → image worker → content generate → review
-4. **[После пилота]** Spec-4: Amazon Operations — browse node validation, первые листинги через SP-API
+4. **[До первого batch publish]** Spec-4: browse node validation + canary listing 1 SKU
 5. **[После пилота]** Spec-5 уже написан; проверить на первом реальном батче
 6. **[После пилота]** Spec-6: Storefront IA & SEO — навигация, фильтры, trust signals
 
@@ -658,6 +650,6 @@ services:
 | `SPEC-2-IMAGE-PIPELINE.md` | Python worker, S3/R2 структура, QA-статусы изображений |
 | `SPEC-3-CONTENT-GENERATION.md` | Claude API промпты, глоссарий, CSV review workflow |
 | `SPEC-4-AMAZON-LAUNCH.md` | GTIN Exemption, Shipping Template, Brand Registry, чеклист |
-| `SPEC-5-PIPELINES.md` | Все 7 пайплайнов (A–G), n8n workflow детали |
+| `SPEC-5-PIPELINES.md` | Все 7 пайплайнов (A–G), channel gates, sync and retry rules |
 | `SPEC-6-STOREFRONT.md` | Storefront IA, навигация, SEO (Phase 2 skeleton) |
-| `SPEC-7-OPERATOR-PLAYBOOK.md` | Процедуры оператора, статусная матрица, SQL quick ref |
+| `SPEC-7-OPERATOR-PLAYBOOK.md` | Процедуры оператора, human gates, daily routine, incident handling |

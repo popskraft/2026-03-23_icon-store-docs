@@ -1,75 +1,77 @@
 # SPEC-2: Пайплайн обработки изображений
 
-Версия: 2.1
+Версия: 3.0
 Статус: рабочий черновик (implementation-facing)
 Язык: русский
-Базис: `MASTER-ARCHITECTURE-v4.md` v4.2
-Область: приём изображений, обработка, хранение утверждённых мастеров, генерация деривативов, QA, handoff для публикации
+Базис: `MASTER-ARCHITECTURE-v4.md` v4.3
+Область: приём изображений, handoff, обработка, хранение approved masters, генерация derivatives, QA
 
 ---
 
+## Часть A. Главное
+
+### 0.1 Краткое резюме
+
+- Google Drive is inbox only.
+- One approved master per SKU or variant.
+- Production storage is R2/S3, not Drive.
+- Image identity is held by `icon_id` and immutable source file IDs, not by folder renaming.
+- Operator owns image QA; processor edits pixels but does not approve publication.
+
+### 0.2 Каноническая последовательность handoff
+
+1. Owner deposits source files.
+2. Operator validates intake.
+3. Operator links files to `icon_id` and assigns `merchant_sku`.
+4. Processor or Python worker edits against that record.
+5. Operator accepts or rejects the result.
+6. System ingests the approved master and generates derivatives.
+
+---
+
+## Часть B. Детальный контракт
+
 ## 1. Назначение
 
-Один утверждённый мастер на SKU — всё остальное генерируется из него. Google Drive — только входящий handoff. Production storage — S3/R2.
+Один approved master на SKU. Всё остальное генерируется из него. Drive нужен только для входящего handoff, production assets живут в R2/S3.
 
 ---
 
 ## 2. Принципы
 
-- Сохранять фактический внешний вид иконы, не применять AI-enhancement.
-- Один канонический мастер на SKU / вариант.
-- Деривативы генерируются детерминированно из утверждённого мастера.
-- Пайплайн batch-safe, возобновляемый, аудитируемый.
-- Cloudinary — не используется.
+1. Не менять реальный внешний вид иконы.
+2. Не использовать generative enhancement.
+3. Approved master один на SKU или variant.
+4. Derivatives генерируются детерминированно.
+5. Batch-safe и restartable behaviour обязателен.
+6. Cloudinary не используется.
 
 ---
 
-## 3. Стек
-
-| Уровень | Дефолт | Альтернатива |
-|---|---|---|
-| Входящий inbox | Google Drive | — |
-| Хранилище мастеров | Cloudflare R2 (S3-compatible) | AWS S3 |
-| Processing worker | Python (Pillow / pyvips) | Node.js / Sharp |
-| Удаление фона | Локально в Python worker (алгоритмы Pillow/pyvips) | Ручная ретушь через operator flow |
-| QA-записи | PostgreSQL + batch review артефакты | — |
-| Publication layer | BigCommerce Catalog API + n8n → SP-API | — |
-
-Код не должен хардкодить конкретного S3-провайдера.
-
----
-
-## 4. Роли
+## 3. Роли
 
 | Роль | Ответственность |
 |---|---|
-| Автор / поставщик | Присылает исходники |
-| Владелец | Принимает батчи, первичная сортировка |
-| Обработчик изображений | Нормализует / ретуширует, возвращает approved master |
-| Оператор | QA-чекпоинты, публикация assets в каналы |
-
-Обработчик и оператор — разные роли. Тот, кто правит пиксели, не принимает решений о публикации.
-
----
-
-## 5. Модель состояний
-
-| Статус | Значение |
-|---|---|
-| `incoming` | Файл получен, не разобран |
-| `retouch_required` | Нужна ручная правка |
-| `processing` | Авто-нормализация запущена |
-| `approved_master` | Утверждённый мастер зафиксирован |
-| `derivatives_ready` | Деривативы созданы |
-| `published` | Asset привязан к BC и/или Amazon |
-| `rejected` | Не годится, нужна пересъёмка |
+| Supplier | присылает исходники |
+| Owner | передаёт материалы и подтверждает товар к запуску |
+| Processor | нормализует и ретуширует изображения |
+| Operator | intake validation, QA, accept/reject, publication readiness |
+| System | ingestion, derivative generation, storage writes |
 
 ---
 
-## 6. Структура хранилища
+## 4. Image identity and storage
 
-```
-incoming/{source_system}/{batch_id}/{merchant_sku}/{source_filename}
+### 4.1 Identity rule
+
+- canonical link: `icon_id`
+- file references: `source_file_id`, `incoming_hash`, `approved_master_hash`
+- SKU path and folder name are operational aliases
+
+### 4.2 Storage layout
+
+```text
+incoming/{source_system}/{batch_id}/{source_file_id}/{source_filename}
 approved/{merchant_sku}/master.jpg
 derived/{merchant_sku}/amazon-main.jpg
 derived/{merchant_sku}/amazon-gallery-01.jpg
@@ -80,100 +82,124 @@ qa/{batch_id}/{merchant_sku}/contact-sheet.jpg
 archive/{batch_id}/manifest.json
 ```
 
-Правила: `incoming` — иммутабельный; деривативы генерируются из мастера, не из деривативов; база данных — источник истины, не файловый путь.
+Rules:
+- `incoming` is immutable
+- database is the source of truth, not the path
+- derivatives are generated from approved master only
 
 ---
 
-## 7. Три стадии обработки
+## 5. Canonical statuses
 
-```
-Stage A: Incoming
-Владелец сортирует фото → папки incoming/{SKU}/
-    ↓
-Оператор QA (чекпоинт ③):
-    ├── OK → Drive webhook запускает Stage B
-    └── Проблемные → ТЗ обработчику → approved/{SKU}/ → Stage B
-
-Stage B: Approved Master (Python worker → S3/R2)
-    - удаление/очистка фона: локально в worker (без внешних background-removal API)
-    - нормализация: ориентация, sRGB, экспозиция, контраст, padding на белый фон
-    - проверка: ≥ 2000px по длинной стороне
-    - PostgreSQL: approved_master_uri, image_qa_status = approved
-
-Stage C: Published Derivatives (Python worker → S3/R2, авто из Stage B)
-    amazon-main:    2000×2000, белый фон, JPG q95
-    amazon-gallery: 1500×1500, белый фон, JPG q90
-    site-pdp:       800×800,   белый фон, WebP q85
-    site-card:      400×400,   белый фон, WebP q80
-    site-zoom:      1600×1600, белый фон, JPG q90
-    thumbnail:      150×150,   fill crop, WebP q70
-    PostgreSQL: derivatives{} заполнен URL-адресами
-```
-
----
-
-## 8. Матрица ракурсов
-
-| Тип конструкции | Минимум Amazon | Статус при нехватке |
-|---|---|---|
-| Плоская доска | front + detail-frame | `media_partial` если нет detail |
-| Металлическая риза | front + detail-riza | `media_partial` |
-| Триптих / складень | front (открыт) + side (закрыт) | `media_partial` |
-| Путевая икона | front + back + side | `media_partial` |
-
-`media_partial` — сайт OK, Amazon заблокирован до добавления фото.
-`media_blocked` — front отсутствует, все шаги заблокированы.
-
----
-
-## 9. Правила обработки
-
-**Разрешено:** ориентация по EXIF, нормализация в sRGB, мягкая экспозиция и контраст, sharpening, resize, padding/containment, конвертация формата.
-
-**Запрещено:** перекраска иконы, generative fill, синтетические фоны, реконструкция контента, любые изменения реального внешнего вида.
-
-**Background removal:** применять только если фон не чистый. Не применять, если края рамки тонкие — риск артефактов.
-
----
-
-## 10. QA-чеклист перед публикацией
-
-- изображение чёткое, икона полностью в кадре
-- нет отражения фотографа, рук, посторонних предметов
-- фон чистый, белый или нейтральный
-- деривативы соответствуют утверждённому мастеру
-- Amazon main: белый фон (#FFFFFF), без логотипов/вотермарков
-
----
-
-## 11. Идемпотентность
-
-- Каждый batch имеет уникальный `batch_id`
-- Входящий файл получает `source_hash`, утверждённый выход — `target_hash`
-- Если source hash не изменился — пропустить
-- Если мастер существует — регенерировать только отсутствующие деривативы
-- Если изменился preset деривата — регенерировать только деривативы
-
----
-
-## 12. Обработка сбоев
-
-| Сбой | Действие |
+| Статус | Значение |
 |---|---|
-| Незначительная проблема фона | `processing` → re-qa |
-| Геометрия, блики | `retouch_required` |
-| Непригодный файл | `rejected` |
-| Amazon main не соответствует | Регенерировать → re-qa |
-| BC upload failure | Retry с тем же утверждённым asset |
+| `incoming` | файл получен, intake не завершён |
+| `retouch_required` | нужен ручной processor pass |
+| `processing` | worker запущен |
+| `media_blocked` | нет обязательного front image |
+| `media_partial` | сайт возможен, Amazon blocked |
+| `approved` | approved master принят оператором |
+| `rejected` | нужна пересъёмка или полный redo |
 
-Не публиковать молча изображение, провалившее QA.
+Internal milestones `approved_master` and `derivatives_ready` допустимы в workflow logs, но не заменяют канонический record status.
 
 ---
 
-## 13. Открытые решения
+## 6. Processing stages
 
-| Решение | Текущая рекомендация | Почему открыто |
+### 6.1 Stage A: Intake
+
+- owner deposits source files
+- operator validates completeness and file-to-record match
+- operator assigns or confirms `merchant_sku`
+- missing or unusable front image -> `media_blocked`
+
+### 6.2 Stage B: Approved master
+
+Worker or processor does:
+- orientation normalization
+- sRGB normalization
+- exposure / contrast cleanup
+- white or neutral background cleanup
+- padding and containment
+- minimum long side: 2000 px
+
+Operator then decides:
+- accept -> `image_qa_status = approved`
+- reject for retouch -> `retouch_required`
+- reject for reshoot -> `rejected`
+
+### 6.3 Stage C: Derivatives
+
+Generated automatically from the approved master:
+- `amazon-main` 2000x2000 JPG
+- `amazon-gallery` 1500x1500 JPG
+- `site-pdp` 800x800 WebP
+- `site-card` 400x400 WebP
+- `site-zoom` 1600x1600 JPG
+- `thumbnail` 150x150 WebP
+
+---
+
+## 7. Angle matrix
+
+| Construction type | Minimum for Amazon | If incomplete |
 |---|---|---|
-| Object storage провайдер | Cloudflare R2 | AWS S3 остаётся совместимым fallback, но launch default уже выбран |
-| Background removal default | Локально в Python worker | Порог качества валидируется на пилоте |
-| Sampling rate QA | 100% для Amazon main | Нужны данные пилота |
+| flat-board | front + detail-frame | `media_partial` |
+| metal oklad | front + detail-riza | `media_partial` |
+| triptych | front-open + side-closed | `media_partial` |
+| travel icon | front + back + side | `media_partial` |
+
+If front image is missing, set `media_blocked`.
+
+---
+
+## 8. QA rules
+
+Allowed:
+- EXIF orientation
+- color normalization to sRGB
+- mild exposure and contrast correction
+- resize, sharpen, padding, format conversion
+
+Forbidden:
+- recoloring the icon
+- generative fill
+- synthetic decorative backgrounds
+- reconstruction of missing visual content
+
+Amazon main image must have:
+- white background
+- no logo or watermark
+- object fully visible
+
+---
+
+## 9. Failure handling
+
+| Failure | Action |
+|---|---|
+| minor background issue | re-run or manual QA decision |
+| edge artifacts | `retouch_required` |
+| geometry or glare problem | `retouch_required` |
+| image too small or unusable | `rejected` |
+| storage upload failure | retry with same approved source |
+
+Rule: never silently publish an image that failed QA.
+
+---
+
+## 10. Idempotency
+
+- each batch has `batch_id`
+- input file gets `incoming_hash`
+- approved master gets `approved_master_hash`
+- unchanged source hash -> skip
+- existing master -> regenerate only missing or outdated derivatives
+
+---
+
+## 11. Открытые вопросы
+
+1. Нужно ли 100% QA для всех derivatives или только для Amazon main и approved master?
+2. Какой процент сложных кейсов потребует ручного processor flow на пилоте?
