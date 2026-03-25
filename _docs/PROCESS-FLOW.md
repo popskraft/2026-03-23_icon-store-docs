@@ -1,9 +1,9 @@
 # PROCESS-FLOW: Краткий сквозной процесс
 
 Version: 1.0
-Status: canonical quick guide
-Language: Russian
-Scope: shortest readable map of the operating process, human checkpoints, and handoffs
+Status: каноническое краткое руководство
+Language: Русский
+Scope: самая короткая читаемая карта операционного процесса, человеческих точек контроля и этапов передачи (handoff)
 
 ---
 
@@ -11,31 +11,31 @@ Scope: shortest readable map of the operating process, human checkpoints, and ha
 
 ### 1. Для чего нужен этот документ
 
-This is the shortest canonical explanation of how one SKU moves through the system.
-Read this first.
-Technical details live in the SPEC files.
+Это самое короткое каноническое объяснение того, как один SKU проходит через систему.
+Начинайте чтение с этого файла.
+Технические детали находятся в SPEC-файлах.
 
 ### 2. Процесс за одну минуту
 
-1. Supplier sends source photos and product facts.
-2. Owner decides the product should go on sale.
-3. Owner enters Layer 1 facts into Supabase Table Editor.
-4. Operator validates intake, links files to the record, and assigns the working SKU.
-5. Image processor or Python worker prepares the approved master image.
-6. Operator approves or rejects the image result.
-7. System generates Layer 2 content through n8n -> Claude API.
-8. Operator reviews batch content in CSV.
-9. System publishes approved data to BigCommerce.
-10. Operator gives final Amazon publish approval.
-11. System submits the Amazon listing through n8n -> SP-API.
-12. Orders and inventory updates sync back into PostgreSQL.
+1. Поставщик передает исходные фото и базовые факты о товаре.
+2. Владелец принимает первичное решение о выводе товара в продажу.
+3. Владелец вносит факты Layer 1 в Supabase Table Editor.
+4. Оператор валидирует intake, связывает файлы с записью и назначает рабочий SKU.
+5. Обработчик изображений или Python worker готовит approved master image.
+6. Оператор принимает или отклоняет результат по изображению.
+7. Система генерирует контент Layer 2 через n8n -> Claude API.
+8. Оператор проверяет батч-контент в CSV.
+9. Система публикует одобренные данные в BigCommerce.
+10. Оператор дает финальное одобрение на публикацию в Amazon.
+11. Система отправляет листинг в Amazon через n8n -> SP-API.
+12. Заказы и обновления остатков синхронизируются обратно в PostgreSQL.
 
-### 3. Four rules that matter most
+### 3. Четыре ключевых правила
 
-- PostgreSQL on Supabase is the only source of truth.
-- Owner intake happens in Supabase Table Editor, not in Google Sheets.
-- Batch content review happens in CSV; Table Editor is only for single-SKU fixes and exceptions.
-- Amazon launch path is `manual operator approval -> automated n8n -> SP-API submit`; Seller Central manual listing is emergency fallback only.
+- PostgreSQL в Supabase — единственный источник правды.
+- Первичный intake выполняется в Supabase Table Editor, а не в Google Sheets.
+- Batch content review выполняется в CSV; Table Editor используется только для правок по одному SKU и исключений.
+- Путь публикации в Amazon: `manual operator approval -> automated n8n -> SP-API submit`; ручной листинг через Seller Central — только аварийный fallback.
 
 ---
 
@@ -44,83 +44,83 @@ Technical details live in the SPEC files.
 ### 4. Линейная карта
 
 ```text
-Supplier
-  -> source photos + raw facts
+Поставщик
+  -> исходные фото + исходные факты
 
-Owner
-  -> primary go-to-sale decision
-  -> Layer 1 facts in Supabase
+Владелец
+  -> первичное решение о выводе в продажу
+  -> факты Layer 1 в Supabase
 
-Operator
-  -> intake validation
-  -> file-to-record linking
-  -> SKU assignment
+Оператор
+  -> валидация intake
+  -> связывание файлов с записью
+  -> назначение SKU
 
-Image processor / Python worker
+Обработчик изображений / Python worker
   -> approved master
   -> derivatives
 
-Operator
-  -> image QA gate
+Оператор
+  -> gate проверки изображений (image QA)
 
-System
-  -> Layer 2 content generation
-  -> review pack export
+Система
+  -> генерация контента Layer 2
+  -> экспорт review pack
 
-Operator
-  -> CSV review gate
+Оператор
+  -> gate CSV-review
 
-System
-  -> BigCommerce publish
+Система
+  -> публикация в BigCommerce
 
-Operator
-  -> Amazon publish gate
+Оператор
+  -> gate публикации Amazon
 
-System
+Система
   -> Amazon SP-API submit
-  -> inventory and status sync
+  -> синхронизация остатков и статусов
 ```
 
 ### 5. Человеческие точки контроля
 
-| Checkpoint | Who decides | What must be true |
+| Точка контроля | Кто принимает решение | Что должно быть выполнено |
 |---|---|---|
-| Product enters pipeline | Owner | Product should be sold; Layer 1 facts are complete enough to continue |
-| Image QA | Operator | Front image is usable; approved master is acceptable; missing media is flagged |
-| Content QA | Operator | CSV review says `APPROVE`; risky claims removed; record is fit for publication |
-| Amazon publish gate | Operator | GTIN exemption confirmed; browse node validated; payload ready; Amazon publish is explicitly approved |
+| Товар входит в пайплайн | Владелец | Товар должен быть выведен в продажу; фактов Layer 1 достаточно для продолжения |
+| Image QA | Оператор | Фронт-изображение пригодно; approved master приемлем; недостающие медиа зафиксированы |
+| Content QA | Оператор | В CSV review стоит `APPROVE`; рискованные формулировки удалены; запись готова к публикации |
+| Amazon publish gate | Оператор | GTIN exemption подтвержден; browse node валидирован; payload готов; публикация в Amazon явно одобрена |
 
-### 6. Publish-gates по каналам
+### 6. Гейты публикации по каналам
 
-| Channel | Required gates |
+| Канал | Обязательные gates |
 |---|---|
 | BigCommerce | `images_approved` + `content_approved` + `price_ready` + `inventory_ready` + `bc_publish_approved` |
-| Amazon | everything from BigCommerce gate + `amazon_publish_approved` + confirmed GTIN exemption + validated browse node |
+| Amazon | все из BigCommerce gate + `amazon_publish_approved` + подтвержденный GTIN exemption + валидированный browse node |
 
-### 7. Правила intake и review
+### 7. Правила intake и проверки
 
-- Owner entry: Supabase Table Editor only.
-- Supplier bulk import: CSV / Excel / spreadsheet import is allowed only as an intake source for operator workflows.
-- Batch review: CSV is canonical.
-- Exception handling: Supabase Table Editor is allowed for one SKU, quick correction, or retry preparation.
+- Ввод владельца: только Supabase Table Editor.
+- Массовый импорт поставщика: CSV / Excel / spreadsheet import допустим только как intake-источник для workflow оператора.
+- Batch review: канонический формат — CSV.
+- Обработка исключений: Supabase Table Editor допускается для одного SKU, быстрой правки или подготовки retry.
 
-### 8. Правило image handoff
+### 8. Правило передачи изображений (image handoff)
 
-1. Owner deposits source files.
-2. Operator validates intake.
-3. Operator links the files to `icon_id` and assigns `merchant_sku`.
-4. Processor edits against that record, not against folder names.
-5. Operator accepts or rejects the result.
-6. System ingests the approved master and generates derivatives.
+1. Владелец размещает исходные файлы.
+2. Оператор валидирует intake.
+3. Оператор связывает файлы с `icon_id` и назначает `merchant_sku`.
+4. Обработчик редактирует относительно этой записи, а не относительно названий папок.
+5. Оператор принимает или отклоняет результат.
+6. Система принимает approved master и генерирует derivatives.
 
-Identity is held by `icon_id` plus immutable source file IDs.
-Folder names and SKU paths are operational aliases, not the source of truth.
+Идентичность держится на `icon_id` и неизменяемых ID исходных файлов.
+Имена папок и SKU-пути — операционные алиасы, а не источник правды.
 
 ### 9. Куда идти дальше
 
-- Data and field ownership: `SPEC-1-CATALOG-DATA-MODEL.md`
-- Images and handoff details: `SPEC-2-IMAGE-PIPELINE.md`
-- Content review contract: `SPEC-3-CONTENT-GENERATION.md`
-- Amazon controls: `SPEC-4-AMAZON-LAUNCH.md`
-- Workflow mechanics: `SPEC-5-PIPELINES.md`
-- Operator procedures: `SPEC-7-OPERATOR-PLAYBOOK.md`
+- Владение данными и полями: `SPEC-1-CATALOG-DATA-MODEL.md`
+- Изображения и детали handoff: `SPEC-2-IMAGE-PIPELINE.md`
+- Контракт content review: `SPEC-3-CONTENT-GENERATION.md`
+- Контроли Amazon: `SPEC-4-AMAZON-LAUNCH.md`
+- Механика workflow: `SPEC-5-PIPELINES.md`
+- Процедуры оператора: `SPEC-7-OPERATOR-PLAYBOOK.md`
