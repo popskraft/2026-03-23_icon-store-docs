@@ -425,8 +425,8 @@ source_of_last_update
 | Производные версии фото | S3 / R2 | Рядом с master, стабильные URL |
 | Опубликованные продукты | BigCommerce | Витрина и checkout |
 | Amazon listing state | Amazon Seller Central | FBM и статус листинга |
-| Review-артефакты | JSONL + CSV | Repo или managed workspace |
-| Рабочие заметки | Obsidian managed workspace | Долгосрочная нечувствительная память |
+| Review-артефакты | JSONL + CSV | Repo `_docs/` или repo-local archive |
+| Рабочие заметки | Repo `_docs/` | Долгосрочная нечувствительная память |
 
 **BigCommerce metafield namespaces:**
 

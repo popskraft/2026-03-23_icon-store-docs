@@ -16,4 +16,5 @@ index_only: true
   <li><a href="{{ '/documents/spec-5-pipelines/' | relative_url }}">SPEC-5: Пайплайны — Операционные Workflows A-G</a></li>
   <li><a href="{{ '/documents/spec-6-storefront/' | relative_url }}">SPEC-6: Storefront IA & SEO</a></li>
   <li><a href="{{ '/documents/spec-7-operator-playbook/' | relative_url }}">SPEC-7: Плейбук оператора</a></li>
+  <li><a href="{{ '/documents/index/' | relative_url }}">Icon Store Docs</a></li>
 </ul>
